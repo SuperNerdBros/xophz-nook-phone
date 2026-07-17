@@ -141,6 +141,7 @@ class Xophz_Nook_Phone_Public {
 			$html = str_replace( '"/_app/', '"' . $dist_url . '_app/', $html );
 			$html = str_replace( "'/_app/", "'" . $dist_url . "_app/", $html );
 			$html = str_replace( '"/favicon', '"' . $dist_url . 'favicon', $html );
+			$html = str_replace( '"/manifest.webmanifest"', '"' . $dist_url . 'manifest.webmanifest"', $html );
 			
 			// Dynamically update router base if needed (e.g. for SvelteKit base)
 			$app_base_slash = $app_base ? '/' . ltrim( $app_base, '/' ) : '';
