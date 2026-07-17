@@ -17,10 +17,16 @@ class Xophz_Nook_Phone_Public {
 		if ( $loadMode === 'custom_slug' && ! empty( $custom_slug ) ) {
 			add_rewrite_rule( '^' . preg_quote( $custom_slug, '/' ) . '(/.*)?$', 'index.php?xophz_nook_phone=1', 'top' );
 		}
+
+		$designer_slug = get_option( 'xophz_nook_phone_designer_slug', 'island-designer' );
+		if ( ! empty( $designer_slug ) ) {
+			add_rewrite_rule( '^' . preg_quote( $designer_slug, '/' ) . '(/.*)?$', 'index.php?xophz_nook_phone_designer=1', 'top' );
+		}
 	}
 
 	public function register_query_vars( $vars ) {
 		$vars[] = 'xophz_nook_phone';
+		$vars[] = 'xophz_nook_phone_designer';
 		return $vars;
 	}
 
@@ -28,10 +34,19 @@ class Xophz_Nook_Phone_Public {
 		global $wp_query;
 		
 		$isRouteMatch = isset( $wp_query->query_vars['xophz_nook_phone'] );
+		$isDesignerRouteMatch = isset( $wp_query->query_vars['xophz_nook_phone_designer'] );
 		$isConfiguredPageMatch = $this->is_configured_page();
 		
 		$loadMode = get_option( 'xophz_nook_phone_load_mode', 'routes_only' );
 		$isHomepage404Fallback = ( $loadMode === 'homepage' && is_404() );
+
+		if ( $isDesignerRouteMatch ) {
+			status_header( 200 );
+			$wp_query->is_404 = false;
+			$designer_slug = get_option( 'xophz_nook_phone_designer_slug', 'island-designer' );
+			$this->render_island_designer_shell( $designer_slug );
+			exit;
+		}
 
 		if ( $isRouteMatch || $isConfiguredPageMatch || $isHomepage404Fallback ) {
 			status_header( 200 );
@@ -101,9 +116,9 @@ class Xophz_Nook_Phone_Public {
 					$dev_html = str_replace('</head>', $vite_client . "\n</head>", $dev_html);
 				}
 
-				// Inject WP API Settings
 				$nonce = wp_create_nonce('wp_rest');
-				$wp_api_settings = "<script>window.wpApiSettings = { root: '" . esc_url_raw(rest_url()) . "', nonce: '" . $nonce . "', pluginUrl: '" . esc_url_raw(XOPHZ_NOOK_PHONE_URL) . "', version: '" . esc_js($this->version) . "' };</script>";
+				$user_id = get_current_user_id();
+				$wp_api_settings = "<script>window.wpApiSettings = { root: '" . esc_url_raw(rest_url()) . "', nonce: '" . $nonce . "', pluginUrl: '" . esc_url_raw(XOPHZ_NOOK_PHONE_URL) . "', version: '" . esc_js($this->version) . "', userId: " . $user_id . " };</script>";
 				$dev_html = str_replace('</head>', $wp_api_settings . "\n</head>", $dev_html);
 				
 				echo $dev_html;
@@ -133,13 +148,48 @@ class Xophz_Nook_Phone_Public {
 			
 			// Inject WP API Settings
 			$nonce = wp_create_nonce('wp_rest');
-			$wp_api_settings = "<script>window.wpApiSettings = { root: '" . esc_url_raw(rest_url()) . "', nonce: '" . $nonce . "', pluginUrl: '" . esc_url_raw(XOPHZ_NOOK_PHONE_URL) . "', version: '" . esc_js($this->version) . "' };</script>";
+			$user_id = get_current_user_id();
+			$wp_api_settings = "<script>window.wpApiSettings = { root: '" . esc_url_raw(rest_url()) . "', nonce: '" . $nonce . "', pluginUrl: '" . esc_url_raw(XOPHZ_NOOK_PHONE_URL) . "', version: '" . esc_js($this->version) . "', userId: " . $user_id . " };</script>";
 			$html = str_replace('</head>', $wp_api_settings . "\n</head>", $html);
 
 			echo $html;
 			exit;
 		} else {
 			echo '<p>Nook OS production build not found.</p>';
+			exit;
+		}
+	}
+
+	private function render_island_designer_shell( $app_base ) {
+		$index_file = XOPHZ_NOOK_PHONE_PATH . 'public/dist-designer/index.html';
+		if ( file_exists( $index_file ) ) {
+			$html = file_get_contents( $index_file );
+			$dist_url = XOPHZ_NOOK_PHONE_URL . 'public/dist-designer/';
+			
+			// Inject base href for resolving relative assets correctly in JS
+			$html = str_replace( '<head>', '<head><base href="' . esc_url( $dist_url ) . '">', $html );
+			
+			// Replace standard dist and static paths
+			$html = str_replace( 'src="dist/', 'src="' . $dist_url . 'dist/', $html );
+			$html = str_replace( 'href="dist/', 'href="' . $dist_url . 'dist/', $html );
+			$html = str_replace( 'src="./static/', 'src="' . $dist_url . 'static/', $html );
+			$html = str_replace( 'href="./static/', 'href="' . $dist_url . 'static/', $html );
+			$html = str_replace( 'src="static/', 'src="' . $dist_url . 'static/', $html );
+			$html = str_replace( 'href="static/', 'href="' . $dist_url . 'static/', $html );
+			
+			// Replace official URL references with our local dist URL
+			$html = str_replace( 'https://eugeneration.github.io/HappyIslandDesigner/', $dist_url, $html );
+			
+			// Inject WP API Settings
+			$nonce = wp_create_nonce('wp_rest');
+			$user_id = get_current_user_id();
+			$wp_api_settings = "<script>window.wpApiSettings = { root: '" . esc_url_raw(rest_url()) . "', nonce: '" . $nonce . "', pluginUrl: '" . esc_url_raw(XOPHZ_NOOK_PHONE_URL) . "', version: '" . esc_js($this->version) . "', userId: " . $user_id . " };</script>";
+			$html = str_replace('</head>', $wp_api_settings . "\n</head>", $html);
+
+			echo $html;
+			exit;
+		} else {
+			echo '<p>Island Designer production build not found.</p>';
 			exit;
 		}
 	}

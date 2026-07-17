@@ -6,6 +6,7 @@ class Xophz_Nook_Phone_CPT {
 		$this->register_nook_app();
 		$this->register_nook_passport();
 		$this->register_nook_thread();
+		$this->register_nook_dm();
 	}
 
 	private function register_nook_app() {
@@ -114,5 +115,33 @@ class Xophz_Nook_Phone_CPT {
 		);
 
 		register_post_type( 'nook_thread', $args );
+	}
+
+	private function register_nook_dm() {
+		$labels = array(
+			'name'                  => 'Direct Messages',
+			'singular_name'         => 'Direct Message',
+			'menu_name'             => 'DMs',
+			'all_items'             => 'All DMs',
+			'search_items'          => 'Search DMs',
+			'not_found'             => 'No DMs found.',
+		);
+
+		$args = array(
+			'labels'             => $labels,
+			'public'             => false,
+			'publicly_queryable' => false,
+			'show_ui'            => true,
+			'show_in_menu'       => 'xophz-nook-phone',
+			'query_var'          => false,
+			'capability_type'    => 'post',
+			'has_archive'        => false,
+			'hierarchical'       => false,
+			'menu_position'      => null,
+			'show_in_rest'       => false, // We use custom endpoints
+			'supports'           => array( 'title', 'editor', 'author', 'custom-fields' ),
+		);
+
+		register_post_type( 'nook_dm', $args );
 	}
 }

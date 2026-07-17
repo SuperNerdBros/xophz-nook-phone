@@ -30,6 +30,7 @@ function run_xophz_nook_phone() {
     add_action( 'admin_init', array( $admin, 'register_settings' ) );
     add_action( 'update_option_xophz_nook_phone_load_mode', array( $admin, 'flush_rewrites_on_save' ), 10, 2 );
     add_action( 'update_option_xophz_nook_phone_custom_slug', array( $admin, 'flush_rewrites_on_save' ), 10, 2 );
+    add_action( 'update_option_xophz_nook_phone_designer_slug', array( $admin, 'flush_rewrites_on_save' ), 10, 2 );
 
     $public = new Xophz_Nook_Phone_Public( 'xophz-nook-phone', XOPHZ_NOOK_PHONE_VERSION );
     add_action( 'init', array( $public, 'register_endpoints' ) );

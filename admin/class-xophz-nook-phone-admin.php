@@ -8,6 +8,7 @@ class Xophz_Nook_Phone_Admin {
 	const OPTION_LOAD_MODE = 'xophz_nook_phone_load_mode';
 	const OPTION_LOAD_PAGE = 'xophz_nook_phone_load_page_id';
 	const OPTION_CUSTOM_SLUG = 'xophz_nook_phone_custom_slug';
+	const OPTION_DESIGNER_SLUG = 'xophz_nook_phone_designer_slug';
 
 	public function __construct( $plugin_name, $version ) {
 		$this->plugin_name = $plugin_name;
@@ -45,6 +46,12 @@ class Xophz_Nook_Phone_Admin {
 			'sanitize_callback' => 'sanitize_title'
 		] );
 
+		register_setting( 'xophz_nook_phone_settings', self::OPTION_DESIGNER_SLUG, [
+			'type' => 'string',
+			'default' => 'island-designer',
+			'sanitize_callback' => 'sanitize_title'
+		] );
+
 		add_settings_section(
 			'xophz_nook_phone_main_section',
 			'App Routing Configuration',
@@ -64,6 +71,14 @@ class Xophz_Nook_Phone_Admin {
 			'xophz_nook_phone_load_page_field',
 			'Target Page',
 			array( $this, 'render_load_page_field' ),
+			'xophz-nook-phone-settings',
+			'xophz_nook_phone_main_section'
+		);
+
+		add_settings_field(
+			'xophz_nook_phone_designer_slug_field',
+			'Island Designer Slug',
+			array( $this, 'render_designer_slug_field' ),
 			'xophz-nook-phone-settings',
 			'xophz_nook_phone_main_section'
 		);
@@ -143,6 +158,14 @@ class Xophz_Nook_Phone_Admin {
 			toggleDropdowns();
 		})();
 		</script>
+		<?php
+	}
+
+	public function render_designer_slug_field() {
+		$designerSlug = get_option( self::OPTION_DESIGNER_SLUG, 'island-designer' );
+		?>
+		<code>/</code> <input type="text" name="<?php echo self::OPTION_DESIGNER_SLUG; ?>" value="<?php echo esc_attr( $designerSlug ); ?>" class="regular-text" placeholder="e.g. island-designer" style="width: 150px;" /> <code>/</code>
+		<p class="description">Configure the slug where the Island Designer app is served.</p>
 		<?php
 	}
 
