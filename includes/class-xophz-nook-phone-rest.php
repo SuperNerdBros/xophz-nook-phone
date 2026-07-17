@@ -749,88 +749,194 @@ class Xophz_Nook_Phone_REST {
 		return rest_ensure_response( $materials_data );
 	}
 
-	public function get_nookipedia_items( WP_REST_Request $request ) {
-		$cache_key = 'xophz_nook_shopping_items_cache_v6';
-		$cached_items = get_transient( $cache_key );
-
-		if ( $cached_items !== false ) {
-			return rest_ensure_response( $cached_items );
-		}
-
-		$all_items = array();
+	private function query_nookipedia_table( $table, $fields, $where = '', $limit = 100 ) {
 		$mw_api_url = 'https://nookipedia.com/w/api.php';
-		
-		// Use a dynamic offset based on the day of the year so the stock rotates daily
 		$params = array(
 			'action' => 'cargoquery',
 			'format' => 'json',
-			'tables' => 'nh_item',
-			'fields' => 'en_name=name,image_url,buy1_price,sell',
-			'limit'  => 500,
+			'tables' => $table,
+			'fields' => $fields,
+			'limit'  => $limit,
 		);
+		if ( ! empty( $where ) ) {
+			$params['where'] = $where;
+		}
 
 		$url = add_query_arg( $params, $mw_api_url );
 		$response = wp_remote_get( $url, array( 'timeout' => 15 ) );
 
 		if ( ! is_wp_error( $response ) && wp_remote_retrieve_response_code( $response ) === 200 ) {
 			$body = wp_remote_retrieve_body( $response );
-			$data = json_decode( $body, true );
+			return json_decode( $body, true );
+		}
+		return null;
+	}
 
-			if ( ! empty( $data['cargoquery'] ) ) {
-				$categories = array('Daily Selection', 'Promotion', 'Seasonal', 'Furniture', 'Fashion', 'Wallpapers & Rugs', 'Other');
-				$seen_ids = array();
-				foreach ( $data['cargoquery'] as $row ) {
-					$name = $row['title']['name'];
-					$id = sanitize_title($name);
-					
-					if ( isset( $seen_ids[$id] ) ) {
-						continue;
-					}
-					$seen_ids[$id] = true;
-					
-					// Get real prices from the Cargo API
-					$buy_price_raw = $row['title']['buy1_price'];
-					$sell_price_raw = $row['title']['sell'];
-					
-					$buy = $buy_price_raw ? intval($buy_price_raw) : 0;
-					$sell = $sell_price_raw ? intval($sell_price_raw) : 0;
-					
-					// Weigh 'Furniture' and 'Fashion' heavily, others less so
-					$hash = md5($name);
-					$cat_num = hexdec(substr($hash, 4, 2)) % 100;
-					if ($cat_num < 15) {
-						$category = 'Daily Selection';
-					} elseif ($cat_num < 20) {
-						$category = 'Promotion';
-					} elseif ($cat_num < 25) {
-						$category = 'Seasonal';
-					} elseif ($cat_num < 50) {
-						$category = 'Furniture';
-					} elseif ($cat_num < 75) {
-						$category = 'Fashion';
-					} elseif ($cat_num < 90) {
-						$category = 'Wallpapers & Rugs';
-					} else {
-						$category = 'Other';
-					}
+	private function normalize_nookipedia_row( $row, $source_table ) {
+		$name = isset( $row['name'] ) ? $row['name'] : '';
+		$id = sanitize_title( $name );
+		$buy = isset( $row['buy1_price'] ) ? intval( $row['buy1_price'] ) : 0;
+		$sell = isset( $row['sell'] ) ? intval( $row['sell'] ) : 0;
+		$image = isset( $row['image_url'] ) ? $row['image_url'] : '';
 
-					$all_items[] = array(
-						'id'           => $id,
-						'name'         => $name,
-						'image'        => $row['title']['image_url'],
-						'imageUrl'     => $row['title']['image_url'],
-						'image_url'    => $row['title']['image_url'],
-						'buy_price'    => $buy,
-						'sell_price'   => $sell,
-						'is_orderable' => $buy > 0,
-						'category'     => $category,
-					);
-				}
+		// Resolve category mapping matching official ACNH storage categories
+		$category = 'Other';
+		if ( $source_table === 'nh_furniture' ) {
+			$raw_cat = isset( $row['category'] ) ? strtolower( $row['category'] ) : '';
+			if ( $raw_cat === 'housewares' ) {
+				$category = 'Housewares';
+			} elseif ( $raw_cat === 'miscellaneous' ) {
+				$category = 'Miscellaneous';
+			} elseif ( $raw_cat === 'wall-mounted' || $raw_cat === 'ceiling decor' ) {
+				$category = 'Wall-mounted';
+			} else {
+				$category = 'Housewares';
+			}
+		} elseif ( $source_table === 'nh_interior' ) {
+			$raw_cat = isset( $row['category'] ) ? strtolower( $row['category'] ) : '';
+			if ( $raw_cat === 'wallpaper' ) {
+				$category = 'Wallpaper';
+			} elseif ( $raw_cat === 'flooring' ) {
+				$category = 'Flooring';
+			} elseif ( $raw_cat === 'rugs' ) {
+				$category = 'Rugs';
+			}
+		} elseif ( $source_table === 'nh_clothing' ) {
+			$category = 'Fashion';
+		} elseif ( $source_table === 'nh_photo' ) {
+			$category = 'Photos';
+		} elseif ( $source_table === 'nh_item' ) {
+			$mat_type = isset( $row['material_type'] ) ? strtolower( $row['material_type'] ) : '';
+			if ( $mat_type === 'music' || strpos( strtolower( $name ), 'k.k.' ) !== false || strpos( strtolower( $name ), 'aircheck' ) !== false ) {
+				$category = 'Music';
+			} elseif ( $mat_type === 'tool' || preg_match( '/\b(axe|shovel|net|rod|watering can|slingshot|wand|ladder|pole)\b/i', $name ) ) {
+				$category = 'Tools';
+			} else {
+				$category = 'Other';
 			}
 		}
 
-		if ( ! empty( $all_items ) ) {
-			set_transient( $cache_key, $all_items, WEEK_IN_SECONDS );
+		return array(
+			'id'           => $id,
+			'name'         => $name,
+			'image'        => $image,
+			'imageUrl'     => $image,
+			'image_url'    => $image,
+			'buy_price'    => $buy,
+			'sell_price'   => $sell,
+			'is_orderable' => $buy > 0,
+			'category'     => $category,
+		);
+	}
+
+	public function get_nookipedia_items( WP_REST_Request $request ) {
+		$search = $request->get_param( 'search' );
+		$requested_cat = $request->get_param( 'category' );
+
+		// Serving from transient cache if no search is performed
+		if ( empty( $search ) ) {
+			$cache_key = 'xophz_nook_shopping_items_cache_v7';
+			$cached_items = get_transient( $cache_key );
+
+			if ( $cached_items === false ) {
+				// Compile main catalog pool from all tables
+				$cached_items = array();
+				$tables_to_query = array(
+					array( 'name' => 'nh_furniture', 'fields' => 'en_name=name,buy1_price,sell,category', 'where' => '', 'limit' => 150 ),
+					array( 'name' => 'nh_interior', 'fields' => 'en_name=name,buy1_price,sell,category', 'where' => '', 'limit' => 100 ),
+					array( 'name' => 'nh_clothing', 'fields' => 'en_name=name,buy1_price,sell,category', 'where' => '', 'limit' => 150 ),
+					array( 'name' => 'nh_photo', 'fields' => 'en_name=name,buy1_price,sell,category', 'where' => '', 'limit' => 50 ),
+					array( 'name' => 'nh_item', 'fields' => 'en_name=name,buy1_price,sell,material_type', 'where' => '', 'limit' => 100 ),
+				);
+
+				foreach ( $tables_to_query as $t ) {
+					$res = $this->query_nookipedia_table( $t['name'], $t['fields'], $t['where'], $t['limit'] );
+					if ( ! empty( $res['cargoquery'] ) ) {
+						foreach ( $res['cargoquery'] as $row ) {
+							if ( ! empty( $row['title']['name'] ) ) {
+								$cached_items[] = $this->normalize_nookipedia_row( $row['title'], $t['name'] );
+							}
+						}
+					}
+				}
+
+				if ( ! empty( $cached_items ) ) {
+					set_transient( $cache_key, $cached_items, WEEK_IN_SECONDS );
+				}
+			}
+
+			if ( ! empty( $requested_cat ) && strtolower( $requested_cat ) !== 'all' ) {
+				$cat_lower = strtolower( $requested_cat );
+				$filtered = array();
+				foreach ( $cached_items as $item ) {
+					$item_cat = isset( $item['category'] ) ? strtolower( $item['category'] ) : '';
+					if ( $cat_lower === 'wall-mounted' && ( $item_cat === 'wall-mounted' || $item_cat === 'ceiling decor' ) ) {
+						$filtered[] = $item;
+					} elseif ( $item_cat === $cat_lower ) {
+						$filtered[] = $item;
+					}
+				}
+				return rest_ensure_response( $filtered );
+			}
+
+			return rest_ensure_response( $cached_items );
+		}
+
+		// Search mode - dynamic query
+		$all_items = array();
+		$search_safe = addslashes( $search );
+		$where_clause = empty( $search ) ? "" : "en_name LIKE '%" . $search_safe . "%'";
+
+		// Determine which tables to query based on requested category to avoid overloading API
+		$tables_to_query = array();
+
+		if ( ! empty( $requested_cat ) && strtolower( $requested_cat ) !== 'all' ) {
+			$cat_lower = strtolower( $requested_cat );
+			$w_prefix = empty( $where_clause ) ? "" : $where_clause . " AND ";
+
+			if ( $cat_lower === 'housewares' ) {
+				$tables_to_query[] = array( 'name' => 'nh_furniture', 'fields' => 'en_name=name,buy1_price,sell,category', 'where' => $w_prefix . "category = 'Housewares'" );
+			} elseif ( $cat_lower === 'miscellaneous' ) {
+				$tables_to_query[] = array( 'name' => 'nh_furniture', 'fields' => 'en_name=name,buy1_price,sell,category', 'where' => $w_prefix . "category = 'Miscellaneous'" );
+			} elseif ( $cat_lower === 'wall-mounted' ) {
+				$tables_to_query[] = array( 'name' => 'nh_furniture', 'fields' => 'en_name=name,buy1_price,sell,category', 'where' => $w_prefix . "(category = 'Wall-mounted' OR category = 'Ceiling decor')" );
+			} elseif ( $cat_lower === 'wallpaper' ) {
+				$tables_to_query[] = array( 'name' => 'nh_interior', 'fields' => 'en_name=name,buy1_price,sell,category', 'where' => $w_prefix . "category = 'Wallpaper'" );
+			} elseif ( $cat_lower === 'flooring' ) {
+				$tables_to_query[] = array( 'name' => 'nh_interior', 'fields' => 'en_name=name,buy1_price,sell,category', 'where' => $w_prefix . "category = 'Flooring'" );
+			} elseif ( $cat_lower === 'rugs' ) {
+				$tables_to_query[] = array( 'name' => 'nh_interior', 'fields' => 'en_name=name,buy1_price,sell,category', 'where' => $w_prefix . "category = 'Rugs'" );
+			} elseif ( $cat_lower === 'fashion' ) {
+				$tables_to_query[] = array( 'name' => 'nh_clothing', 'fields' => 'en_name=name,buy1_price,sell,category', 'where' => $where_clause );
+			} elseif ( $cat_lower === 'photos' ) {
+				$tables_to_query[] = array( 'name' => 'nh_photo', 'fields' => 'en_name=name,buy1_price,sell,category', 'where' => $where_clause );
+			} elseif ( $cat_lower === 'music' ) {
+				$tables_to_query[] = array( 'name' => 'nh_item', 'fields' => 'en_name=name,buy1_price,sell,material_type', 'where' => $w_prefix . "(material_type = 'Music' OR en_name LIKE 'K.K. %')" );
+			} elseif ( $cat_lower === 'tools' ) {
+				$tables_to_query[] = array( 'name' => 'nh_item', 'fields' => 'en_name=name,buy1_price,sell,material_type', 'where' => $w_prefix . "(material_type = 'Tool' OR en_name LIKE '%axe%' OR en_name LIKE '%shovel%' OR en_name LIKE '%net%' OR en_name LIKE '%rod%')" );
+			} elseif ( $cat_lower === 'other' ) {
+				$tables_to_query[] = array( 'name' => 'nh_item', 'fields' => 'en_name=name,buy1_price,sell,material_type', 'where' => $w_prefix . "(material_type != 'Music' AND material_type != 'Tool')" );
+			}
+		} else {
+			// Query all tables if no category is specified (All / Tom Nook Search)
+			$tables_to_query = array(
+				array( 'name' => 'nh_furniture', 'fields' => 'en_name=name,buy1_price,sell,category', 'where' => $where_clause ),
+				array( 'name' => 'nh_interior', 'fields' => 'en_name=name,buy1_price,sell,category', 'where' => $where_clause ),
+				array( 'name' => 'nh_clothing', 'fields' => 'en_name=name,buy1_price,sell,category', 'where' => $where_clause ),
+				array( 'name' => 'nh_photo', 'fields' => 'en_name=name,buy1_price,sell,category', 'where' => $where_clause ),
+				array( 'name' => 'nh_item', 'fields' => 'en_name=name,buy1_price,sell,material_type', 'where' => $where_clause ),
+			);
+		}
+
+		foreach ( $tables_to_query as $t ) {
+			$res = $this->query_nookipedia_table( $t['name'], $t['fields'], $t['where'], 100 );
+			if ( ! empty( $res['cargoquery'] ) ) {
+				foreach ( $res['cargoquery'] as $row ) {
+					if ( ! empty( $row['title']['name'] ) ) {
+						$all_items[] = $this->normalize_nookipedia_row( $row['title'], $t['name'] );
+					}
+				}
+			}
 		}
 
 		return rest_ensure_response( $all_items );
