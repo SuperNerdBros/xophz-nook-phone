@@ -590,8 +590,29 @@ class Xophz_Nook_Phone_REST {
 			return rest_ensure_response( array( 'state' => null ) );
 		}
 		
+		$state_data = json_decode( $state, true );
+		if ( is_array( $state_data ) ) {
+			// Dynamically populate bells from _xp_total_gp (Bells)
+			$total_gp = (int) get_user_meta( $user_id, '_xp_total_gp', true ) ?: 0;
+			if ( $total_gp > 0 ) {
+				$state_data['bells'] = $total_gp;
+			}
+			
+			// Attach player level and XP stats if the XP system is available
+			if ( class_exists( 'Xophz_Compass_Xp_Players' ) ) {
+				$stats = Xophz_Compass_Xp_Players::get_user_stats( $user_id );
+				$state_data['xp_level'] = $stats['level'];
+				$state_data['xp_current'] = $stats['current_xp'];
+				$state_data['xp_target'] = $stats['target_xp'];
+				$state_data['xp_total'] = $stats['total_xp'];
+				$state_data['is_pro'] = Xophz_Compass_Xp_Players::is_pro_user( $user_id );
+			} else {
+				$state_data['is_pro'] = false;
+			}
+		}
+		
 		return rest_ensure_response( array(
-			'state' => json_decode( $state, true )
+			'state' => $state_data
 		) );
 	}
 
@@ -603,6 +624,10 @@ class Xophz_Nook_Phone_REST {
 			return new WP_Error( 'missing_state', 'No state data provided.', array( 'status' => 400 ) );
 		}
 		
+		$old_state_raw = get_user_meta( $user_id, '_nook_os_state', true );
+		$old_state_data = !empty( $old_state_raw ) ? json_decode( $old_state_raw, true ) : array();
+		
+		$state_data = array();
 		// Validate it's proper JSON by decoding and re-encoding
 		if ( is_string( $state_json ) ) {
 			$state_data = json_decode( $state_json, true );
@@ -611,8 +636,18 @@ class Xophz_Nook_Phone_REST {
 			}
 			update_user_meta( $user_id, '_nook_os_state', wp_json_encode( $state_data ) );
 		} else if ( is_array( $state_json ) ) {
+			$state_data = $state_json;
 			update_user_meta( $user_id, '_nook_os_state', wp_json_encode( $state_json ) );
 		}
+		
+		// Sync bells from state to user meta / GP (Bells)
+		if ( is_array( $state_data ) && isset( $state_data['bells'] ) ) {
+			$new_bells = (int) $state_data['bells'];
+			update_user_meta( $user_id, '_xp_total_gp', $new_bells );
+		}
+		
+		// Fire action for the XP engine to process collections/activities
+		do_action( 'xophz_nook_phone_state_saved', $user_id, $state_data, $old_state_data );
 		
 		return rest_ensure_response( array( 'success' => true ) );
 	}
@@ -835,18 +870,18 @@ class Xophz_Nook_Phone_REST {
 
 		// Serving from transient cache if no search is performed
 		if ( empty( $search ) ) {
-			$cache_key = 'xophz_nook_shopping_items_cache_v7';
+			$cache_key = 'xophz_nook_shopping_items_cache_v8';
 			$cached_items = get_transient( $cache_key );
 
 			if ( $cached_items === false ) {
 				// Compile main catalog pool from all tables
 				$cached_items = array();
 				$tables_to_query = array(
-					array( 'name' => 'nh_furniture', 'fields' => 'en_name=name,buy1_price,sell,category', 'where' => '', 'limit' => 150 ),
-					array( 'name' => 'nh_interior', 'fields' => 'en_name=name,buy1_price,sell,category', 'where' => '', 'limit' => 100 ),
-					array( 'name' => 'nh_clothing', 'fields' => 'en_name=name,buy1_price,sell,category', 'where' => '', 'limit' => 150 ),
-					array( 'name' => 'nh_photo', 'fields' => 'en_name=name,buy1_price,sell,category', 'where' => '', 'limit' => 50 ),
-					array( 'name' => 'nh_item', 'fields' => 'en_name=name,buy1_price,sell,material_type', 'where' => '', 'limit' => 100 ),
+					array( 'name' => 'nh_furniture', 'fields' => 'en_name=name,buy1_price,sell,category,image_url', 'where' => '', 'limit' => 150 ),
+					array( 'name' => 'nh_interior', 'fields' => 'en_name=name,buy1_price,sell,category,image_url', 'where' => '', 'limit' => 100 ),
+					array( 'name' => 'nh_clothing', 'fields' => 'en_name=name,buy1_price,sell,category,image_url', 'where' => '', 'limit' => 150 ),
+					array( 'name' => 'nh_photo', 'fields' => 'en_name=name,buy1_price,sell,category,image_url', 'where' => '', 'limit' => 50 ),
+					array( 'name' => 'nh_item', 'fields' => 'en_name=name,buy1_price,sell,material_type,image_url', 'where' => '', 'limit' => 100 ),
 				);
 
 				foreach ( $tables_to_query as $t ) {
@@ -895,36 +930,36 @@ class Xophz_Nook_Phone_REST {
 			$w_prefix = empty( $where_clause ) ? "" : $where_clause . " AND ";
 
 			if ( $cat_lower === 'housewares' ) {
-				$tables_to_query[] = array( 'name' => 'nh_furniture', 'fields' => 'en_name=name,buy1_price,sell,category', 'where' => $w_prefix . "category = 'Housewares'" );
+				$tables_to_query[] = array( 'name' => 'nh_furniture', 'fields' => 'en_name=name,buy1_price,sell,category,image_url', 'where' => $w_prefix . "category = 'Housewares'" );
 			} elseif ( $cat_lower === 'miscellaneous' ) {
-				$tables_to_query[] = array( 'name' => 'nh_furniture', 'fields' => 'en_name=name,buy1_price,sell,category', 'where' => $w_prefix . "category = 'Miscellaneous'" );
+				$tables_to_query[] = array( 'name' => 'nh_furniture', 'fields' => 'en_name=name,buy1_price,sell,category,image_url', 'where' => $w_prefix . "category = 'Miscellaneous'" );
 			} elseif ( $cat_lower === 'wall-mounted' ) {
-				$tables_to_query[] = array( 'name' => 'nh_furniture', 'fields' => 'en_name=name,buy1_price,sell,category', 'where' => $w_prefix . "(category = 'Wall-mounted' OR category = 'Ceiling decor')" );
+				$tables_to_query[] = array( 'name' => 'nh_furniture', 'fields' => 'en_name=name,buy1_price,sell,category,image_url', 'where' => $w_prefix . "(category = 'Wall-mounted' OR category = 'Ceiling decor')" );
 			} elseif ( $cat_lower === 'wallpaper' ) {
-				$tables_to_query[] = array( 'name' => 'nh_interior', 'fields' => 'en_name=name,buy1_price,sell,category', 'where' => $w_prefix . "category = 'Wallpaper'" );
+				$tables_to_query[] = array( 'name' => 'nh_interior', 'fields' => 'en_name=name,buy1_price,sell,category,image_url', 'where' => $w_prefix . "category = 'Wallpaper'" );
 			} elseif ( $cat_lower === 'flooring' ) {
-				$tables_to_query[] = array( 'name' => 'nh_interior', 'fields' => 'en_name=name,buy1_price,sell,category', 'where' => $w_prefix . "category = 'Flooring'" );
+				$tables_to_query[] = array( 'name' => 'nh_interior', 'fields' => 'en_name=name,buy1_price,sell,category,image_url', 'where' => $w_prefix . "category = 'Flooring'" );
 			} elseif ( $cat_lower === 'rugs' ) {
-				$tables_to_query[] = array( 'name' => 'nh_interior', 'fields' => 'en_name=name,buy1_price,sell,category', 'where' => $w_prefix . "category = 'Rugs'" );
+				$tables_to_query[] = array( 'name' => 'nh_interior', 'fields' => 'en_name=name,buy1_price,sell,category,image_url', 'where' => $w_prefix . "category = 'Rugs'" );
 			} elseif ( $cat_lower === 'fashion' ) {
-				$tables_to_query[] = array( 'name' => 'nh_clothing', 'fields' => 'en_name=name,buy1_price,sell,category', 'where' => $where_clause );
+				$tables_to_query[] = array( 'name' => 'nh_clothing', 'fields' => 'en_name=name,buy1_price,sell,category,image_url', 'where' => $where_clause );
 			} elseif ( $cat_lower === 'photos' ) {
-				$tables_to_query[] = array( 'name' => 'nh_photo', 'fields' => 'en_name=name,buy1_price,sell,category', 'where' => $where_clause );
+				$tables_to_query[] = array( 'name' => 'nh_photo', 'fields' => 'en_name=name,buy1_price,sell,category,image_url', 'where' => $where_clause );
 			} elseif ( $cat_lower === 'music' ) {
-				$tables_to_query[] = array( 'name' => 'nh_item', 'fields' => 'en_name=name,buy1_price,sell,material_type', 'where' => $w_prefix . "(material_type = 'Music' OR en_name LIKE 'K.K. %')" );
+				$tables_to_query[] = array( 'name' => 'nh_item', 'fields' => 'en_name=name,buy1_price,sell,material_type,image_url', 'where' => $w_prefix . "(material_type = 'Music' OR en_name LIKE 'K.K. %')" );
 			} elseif ( $cat_lower === 'tools' ) {
-				$tables_to_query[] = array( 'name' => 'nh_item', 'fields' => 'en_name=name,buy1_price,sell,material_type', 'where' => $w_prefix . "(material_type = 'Tool' OR en_name LIKE '%axe%' OR en_name LIKE '%shovel%' OR en_name LIKE '%net%' OR en_name LIKE '%rod%')" );
+				$tables_to_query[] = array( 'name' => 'nh_item', 'fields' => 'en_name=name,buy1_price,sell,material_type,image_url', 'where' => $w_prefix . "(material_type = 'Tool' OR en_name LIKE '%axe%' OR en_name LIKE '%shovel%' OR en_name LIKE '%net%' OR en_name LIKE '%rod%')" );
 			} elseif ( $cat_lower === 'other' ) {
-				$tables_to_query[] = array( 'name' => 'nh_item', 'fields' => 'en_name=name,buy1_price,sell,material_type', 'where' => $w_prefix . "(material_type != 'Music' AND material_type != 'Tool')" );
+				$tables_to_query[] = array( 'name' => 'nh_item', 'fields' => 'en_name=name,buy1_price,sell,material_type,image_url', 'where' => $w_prefix . "(material_type != 'Music' AND material_type != 'Tool')" );
 			}
 		} else {
 			// Query all tables if no category is specified (All / Tom Nook Search)
 			$tables_to_query = array(
-				array( 'name' => 'nh_furniture', 'fields' => 'en_name=name,buy1_price,sell,category', 'where' => $where_clause ),
-				array( 'name' => 'nh_interior', 'fields' => 'en_name=name,buy1_price,sell,category', 'where' => $where_clause ),
-				array( 'name' => 'nh_clothing', 'fields' => 'en_name=name,buy1_price,sell,category', 'where' => $where_clause ),
-				array( 'name' => 'nh_photo', 'fields' => 'en_name=name,buy1_price,sell,category', 'where' => $where_clause ),
-				array( 'name' => 'nh_item', 'fields' => 'en_name=name,buy1_price,sell,material_type', 'where' => $where_clause ),
+				array( 'name' => 'nh_furniture', 'fields' => 'en_name=name,buy1_price,sell,category,image_url', 'where' => $where_clause ),
+				array( 'name' => 'nh_interior', 'fields' => 'en_name=name,buy1_price,sell,category,image_url', 'where' => $where_clause ),
+				array( 'name' => 'nh_clothing', 'fields' => 'en_name=name,buy1_price,sell,category,image_url', 'where' => $where_clause ),
+				array( 'name' => 'nh_photo', 'fields' => 'en_name=name,buy1_price,sell,category,image_url', 'where' => $where_clause ),
+				array( 'name' => 'nh_item', 'fields' => 'en_name=name,buy1_price,sell,material_type,image_url', 'where' => $where_clause ),
 			);
 		}
 
