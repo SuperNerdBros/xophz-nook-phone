@@ -289,6 +289,7 @@ class Xophz_Nook_Phone_REST {
 				$id = get_the_ID();
 				
 				$user_rating = null;
+				$user_comment = '';
 				if ( $user_id ) {
 					$existing_comments = get_comments( array(
 						'post_id' => $id,
@@ -297,7 +298,23 @@ class Xophz_Nook_Phone_REST {
 					) );
 					if ( ! empty( $existing_comments ) ) {
 						$user_rating = (float) get_comment_meta( $existing_comments[0]->comment_ID, '_nook_app_rating', true );
+						$user_comment = $existing_comments[0]->comment_content;
 					}
+				}
+
+				$reviews = array();
+				$comments = get_comments( array(
+					'post_id' => $id,
+					'status'  => 'approve',
+					'order'   => 'DESC'
+				) );
+				foreach ( $comments as $c ) {
+					$reviews[] = array(
+						'author'  => $c->comment_author,
+						'content' => $c->comment_content,
+						'rating'  => (float) get_comment_meta( $c->comment_ID, '_nook_app_rating', true ),
+						'date'    => mysql2date( 'F j, Y', $c->comment_date )
+					);
 				}
 
 				$apps[] = array(
@@ -309,7 +326,11 @@ class Xophz_Nook_Phone_REST {
 					'average_rating' => (float) get_post_meta( $id, '_nook_app_average_rating', true ),
 					'rating_count'   => (int) get_post_meta( $id, '_nook_app_rating_count', true ),
 					'thumbnail'      => get_the_post_thumbnail_url( $id, 'full' ),
-					'user_rating'    => $user_rating
+					'user_rating'    => $user_rating,
+					'user_comment'   => $user_comment,
+					'reviews'        => $reviews,
+					'is_system'      => get_post_meta( $id, '_nook_app_is_system', true ) === 'yes',
+					'app_id'         => get_post_meta( $id, '_nook_app_app_id', true ),
 				);
 			}
 			wp_reset_postdata();

@@ -24,6 +24,7 @@ require_once XOPHZ_NOOK_PHONE_PATH . 'includes/class-xophz-nook-phone-cpt.php';
 function run_xophz_nook_phone() {
     $cpt = new Xophz_Nook_Phone_CPT();
     add_action( 'init', array( $cpt, 'register_post_types' ) );
+    add_action( 'init', array( $cpt, 'populate_default_apps' ), 20 );
 
     $admin = new Xophz_Nook_Phone_Admin( 'xophz-nook-phone', XOPHZ_NOOK_PHONE_VERSION );
     add_action( 'admin_menu', array( $admin, 'add_plugin_admin_menu' ) );
