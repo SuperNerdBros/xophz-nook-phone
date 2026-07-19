@@ -128,13 +128,13 @@ class Xophz_Nook_Phone_REST {
 			'permission_callback' => '__return_true',
 		) );
 
-		register_rest_route( $namespace, '/auth/patreon/url', array(
+		register_rest_route( $namespace, '/auth/patreon/nook-phone/url', array(
 			'methods'             => WP_REST_Server::READABLE,
 			'callback'            => array( $this, 'get_patreon_auth_url' ),
 			'permission_callback' => '__return_true',
 		) );
 
-		register_rest_route( $namespace, '/auth/patreon/callback', array(
+		register_rest_route( $namespace, '/auth/patreon/nook-phone/callback', array(
 			'methods'             => WP_REST_Server::READABLE,
 			'callback'            => array( $this, 'handle_patreon_callback' ),
 			'permission_callback' => '__return_true',
@@ -153,7 +153,7 @@ class Xophz_Nook_Phone_REST {
 			$return_url = home_url( '/' . get_option( 'xophz_nook_phone_custom_slug', 'nookphone' ) );
 		}
 		
-		$redirect_uri = site_url( '/wp-json/xophz/v1/auth/patreon/callback' );
+		$redirect_uri = site_url( '/wp-json/xophz/v1/auth/patreon/nook-phone/callback' );
 		$url = 'https://www.patreon.com/oauth2/authorize?response_type=code&client_id=' . urlencode($client_id) . '&redirect_uri=' . urlencode($redirect_uri) . '&scope=' . rawurlencode('identity identity[email]') . '&state=' . urlencode(base64_encode($return_url));
 		
 		return rest_ensure_response( array(
@@ -165,14 +165,25 @@ class Xophz_Nook_Phone_REST {
 	public function handle_patreon_callback( WP_REST_Request $request ) {
 		$code = $request->get_param( 'code' );
 		$state = $request->get_param( 'state' );
+		$error = $request->get_param( 'error' );
 		
-		if ( ! $code ) {
-			return new WP_Error( 'missing_code', 'Authorization code missing', array( 'status' => 400 ) );
+		$redirect_url = home_url( '/' . get_option( 'xophz_nook_phone_custom_slug', 'nookphone' ) );
+		if ( ! empty( $state ) ) {
+			$decoded_state = base64_decode( $state );
+			if ( $decoded_state && filter_var( $decoded_state, FILTER_VALIDATE_URL ) ) {
+				$redirect_url = $decoded_state;
+			}
+		}
+		
+		if ( $error || ! $code ) {
+			$error_code = $error ? sanitize_text_field( $error ) : 'missing_code';
+			wp_redirect( add_query_arg( 'error', $error_code, $redirect_url ) );
+			exit;
 		}
 
 		$client_id = getenv('PATREON_CLIENT_ID');
 		$client_secret = getenv('PATREON_CLIENT_SECRET');
-		$redirect_uri = site_url( '/wp-json/xophz/v1/auth/patreon/callback' );
+		$redirect_uri = site_url( '/wp-json/xophz/v1/auth/patreon/nook-phone/callback' );
 
 		// Exchange code for token
 		$token_url = 'https://www.patreon.com/api/oauth2/token';
@@ -189,14 +200,16 @@ class Xophz_Nook_Phone_REST {
 		) );
 
 		if ( is_wp_error( $response ) ) {
-			return new WP_Error( 'token_error', 'Failed to retrieve access token', array( 'status' => 500 ) );
+			wp_redirect( add_query_arg( 'error', 'token_error', $redirect_url ) );
+			exit;
 		}
 
 		$body = wp_remote_retrieve_body( $response );
 		$data = json_decode( $body, true );
 
 		if ( empty( $data['access_token'] ) ) {
-			return new WP_Error( 'token_error', 'Invalid token response', array( 'status' => 500 ) );
+			wp_redirect( add_query_arg( 'error', 'invalid_token_response', $redirect_url ) );
+			exit;
 		}
 
 		$access_token = $data['access_token'];
@@ -210,7 +223,8 @@ class Xophz_Nook_Phone_REST {
 		) );
 
 		if ( is_wp_error( $identity_response ) ) {
-			return new WP_Error( 'identity_error', 'Failed to retrieve user identity', array( 'status' => 500 ) );
+			wp_redirect( add_query_arg( 'error', 'identity_error', $redirect_url ) );
+			exit;
 		}
 
 		$identity_body = wp_remote_retrieve_body( $identity_response );
@@ -220,7 +234,8 @@ class Xophz_Nook_Phone_REST {
 		$patreon_id = isset( $identity_data['data']['id'] ) ? $identity_data['data']['id'] : '';
 
 		if ( empty( $email ) ) {
-			return new WP_Error( 'identity_error', 'Failed to retrieve email from Patreon', array( 'status' => 500 ) );
+			wp_redirect( add_query_arg( 'error', 'missing_email', $redirect_url ) );
+			exit;
 		}
 		
 		// Parse max tier amount
@@ -260,7 +275,8 @@ class Xophz_Nook_Phone_REST {
 			$user_id = wp_create_user( $username, $password, $email );
 			
 			if ( is_wp_error( $user_id ) ) {
-				return new WP_Error( 'user_creation_error', 'Failed to create user account', array( 'status' => 500 ) );
+				wp_redirect( add_query_arg( 'error', 'user_creation_error', $redirect_url ) );
+				exit;
 			}
 			$user = get_user_by( 'id', $user_id );
 		}
@@ -273,24 +289,24 @@ class Xophz_Nook_Phone_REST {
 			update_user_meta( $user->ID, '_patreon_refresh_token', $data['refresh_token'] );
 		}
 
+		if ( $max_tier_cents > 0 && ! in_array( 'pro_user', (array) $user->roles ) ) {
+			$user->add_role( 'pro_user' );
+		}
+
 		// Log the user in
 		wp_set_current_user( $user->ID );
 		wp_set_auth_cookie( $user->ID );
 
 		// Redirect back
-		$redirect_url = '';
+		$redirect_url = home_url( '/' . get_option( 'xophz_nook_phone_custom_slug', 'nookphone' ) );
 		if ( ! empty( $state ) ) {
 			$decoded_state = base64_decode( $state );
 			if ( $decoded_state && filter_var( $decoded_state, FILTER_VALIDATE_URL ) ) {
 				$redirect_url = $decoded_state;
 			}
 		}
-
-		if ( empty( $redirect_url ) ) {
-			$custom_slug = get_option( 'xophz_nook_phone_custom_slug', 'nookphone' );
-			$redirect_url = home_url( '/' . $custom_slug );
-		}
-
+		
+		$redirect_url = add_query_arg( 'success', 'patreon', $redirect_url );
 		wp_redirect( $redirect_url );
 		exit;
 	}
@@ -1026,12 +1042,13 @@ class Xophz_Nook_Phone_REST {
 	public function get_nook_state( WP_REST_Request $request ) {
 		$user_id = get_current_user_id();
 		$state = get_user_meta( $user_id, '_nook_os_state', true );
-		if ( empty( $state ) ) {
-			return rest_ensure_response( array( 'state' => null ) );
+		$state_data = array();
+		if ( ! empty( $state ) ) {
+			$decoded = json_decode( $state, true );
+			if ( is_array( $decoded ) ) {
+				$state_data = $decoded;
+			}
 		}
-		
-		$state_data = json_decode( $state, true );
-		if ( is_array( $state_data ) ) {
 			// Dynamically populate bells from _xp_total_gp (Bells)
 			$total_gp = (int) get_user_meta( $user_id, '_xp_total_gp', true ) ?: 0;
 			if ( $total_gp > 0 ) {
@@ -1056,7 +1073,6 @@ class Xophz_Nook_Phone_REST {
 			} else {
 				$state_data['patreonTierCents'] = 0;
 			}
-		}
 		
 		return rest_ensure_response( array(
 			'state' => $state_data
