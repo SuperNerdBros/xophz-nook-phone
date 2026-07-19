@@ -82,7 +82,59 @@ add_action( 'plugins_loaded', 'run_xophz_nook_phone' );
 
 function xophz_nook_phone_plugin_action_links( $links ) {
     $settings_link = '<a href="admin.php?page=xophz-nook-phone">' . __( 'Settings', 'xophz-nook-phone' ) . '</a>';
+    $update_url = wp_nonce_url( admin_url( 'admin-post.php?action=xophz_nook_phone_force_update' ), 'xophz_nook_phone_force_update' );
+    $update_link = '<a href="' . esc_url( $update_url ) . '" style="color: #d63638;">' . __( 'Force Update', 'xophz-nook-phone' ) . '</a>';
+    
+    array_unshift( $links, $update_link );
     array_unshift( $links, $settings_link );
     return $links;
 }
 add_filter( 'plugin_action_links_' . plugin_basename( __FILE__ ), 'xophz_nook_phone_plugin_action_links' );
+
+function xophz_nook_phone_handle_force_update() {
+    if ( ! current_user_can( 'update_plugins' ) ) {
+        wp_die( 'You do not have permission to update plugins.' );
+    }
+    
+    check_admin_referer( 'xophz_nook_phone_force_update' );
+    
+    $version = XOPHZ_NOOK_PHONE_VERSION;
+    $zip_url = "https://github.com/SuperNerdBros/xophz-nook-phone/releases/download/v{$version}/xophz-nook-phone-{$version}.zip";
+    
+    include_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
+    include_once ABSPATH . 'wp-admin/includes/file.php';
+    include_once ABSPATH . 'wp-admin/includes/misc.php';
+    include_once ABSPATH . 'wp-admin/includes/plugin.php';
+    
+    add_filter( 'site_transient_update_plugins', function( $transient ) use ( $zip_url ) {
+        $plugin_slug = plugin_basename( XOPHZ_NOOK_PHONE_PATH . 'xophz-nook-phone.php' );
+        
+        $obj = new stdClass();
+        $obj->slug = 'xophz-nook-phone';
+        $obj->plugin = $plugin_slug;
+        $obj->new_version = XOPHZ_NOOK_PHONE_VERSION . '.' . time();
+        $obj->url = '';
+        $obj->package = $zip_url;
+        
+        if ( ! is_object( $transient ) ) {
+            $transient = new stdClass();
+        }
+        if ( ! isset( $transient->response ) ) {
+            $transient->response = array();
+        }
+        $transient->response[$plugin_slug] = $obj;
+        
+        return $transient;
+    } );
+    
+    $upgrader = new Plugin_Upgrader( new Plugin_Upgrader_Skin( array(
+        'title'  => 'Force Updating Nook OS Plugin',
+        'plugin' => plugin_basename( XOPHZ_NOOK_PHONE_PATH . 'xophz-nook-phone.php' ),
+    ) ) );
+    
+    $upgrader->upgrade( plugin_basename( XOPHZ_NOOK_PHONE_PATH . 'xophz-nook-phone.php' ) );
+    
+    echo '<p><a href="' . admin_url( 'plugins.php' ) . '" class="button button-primary">Return to Plugins</a></p>';
+    exit;
+}
+add_action( 'admin_post_xophz_nook_phone_force_update', 'xophz_nook_phone_handle_force_update' );
