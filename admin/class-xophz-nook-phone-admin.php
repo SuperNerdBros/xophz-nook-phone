@@ -94,29 +94,6 @@ class Xophz_Nook_Phone_Admin {
 			'xophz-nook-phone-settings',
 			'xophz_nook_phone_main_section'
 		);
-
-		add_settings_section(
-			'xophz_nook_phone_patreon_section',
-			'Patreon Integration',
-			array( $this, 'render_patreon_section_description' ),
-			'xophz-nook-phone-settings'
-		);
-
-		add_settings_field(
-			'xophz_nook_phone_patreon_client_id',
-			'Patreon Client ID',
-			array( $this, 'render_patreon_client_id_field' ),
-			'xophz-nook-phone-settings',
-			'xophz_nook_phone_patreon_section'
-		);
-
-		add_settings_field(
-			'xophz_nook_phone_patreon_client_secret',
-			'Patreon Client Secret',
-			array( $this, 'render_patreon_client_secret_field' ),
-			'xophz-nook-phone-settings',
-			'xophz_nook_phone_patreon_section'
-		);
 	}
 
 	public function sanitize_load_mode( $value ) {

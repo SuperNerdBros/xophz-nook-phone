@@ -46,6 +46,36 @@ function run_xophz_nook_phone() {
     if ( ! wp_next_scheduled( 'xophz_nook_sync_catalog_cron' ) ) {
         wp_schedule_event( time(), 'daily', 'xophz_nook_sync_catalog_cron' );
     }
+
+    // Register with WP Connectors API
+    add_action( 'wp_connectors_init', function( $registry ) {
+        if ( method_exists( $registry, 'register' ) ) {
+            $registry->register(
+                'patreon_client_id',
+                array(
+                    'name'           => 'Patreon Client ID',
+                    'description'    => 'Client ID for Patreon OAuth integration.',
+                    'type'           => 'oauth',
+                    'authentication' => array(
+                        'method'       => 'api_key',
+                        'setting_name' => 'xophz_nook_phone_patreon_client_id',
+                    ),
+                )
+            );
+            $registry->register(
+                'patreon_client_secret',
+                array(
+                    'name'           => 'Patreon Client Secret',
+                    'description'    => 'Client Secret for Patreon OAuth.',
+                    'type'           => 'oauth',
+                    'authentication' => array(
+                        'method'       => 'api_key',
+                        'setting_name' => 'xophz_nook_phone_patreon_client_secret',
+                    ),
+                )
+            );
+        }
+    } );
 }
 
 add_action( 'plugins_loaded', 'run_xophz_nook_phone' );
