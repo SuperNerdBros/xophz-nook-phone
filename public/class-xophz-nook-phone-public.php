@@ -143,6 +143,11 @@ class Xophz_Nook_Phone_Public {
 			$html = str_replace( '"/favicon', '"' . $dist_url . 'favicon', $html );
 			$html = str_replace( '"/manifest.webmanifest"', '"' . $dist_url . 'manifest.webmanifest"', $html );
 			
+			// Replace hardcoded domain with actual dynamic URL for social/SEO tags
+			$current_url = home_url( $_SERVER['REQUEST_URI'] );
+			$html = str_replace( 'https://nookphone.app/', esc_url( $current_url ), $html );
+
+			
 			// Dynamically update router base if needed (e.g. for SvelteKit base)
 			$app_base_slash = $app_base ? '/' . ltrim( $app_base, '/' ) : '';
 			$html = preg_replace( '/base:\s*""/', 'base: "' . esc_js( $app_base_slash ) . '"', $html );
