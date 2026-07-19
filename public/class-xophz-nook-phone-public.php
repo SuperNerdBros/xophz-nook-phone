@@ -22,16 +22,42 @@ class Xophz_Nook_Phone_Public {
 		if ( ! empty( $designer_slug ) ) {
 			add_rewrite_rule( '^' . preg_quote( $designer_slug, '/' ) . '(/.*)?$', 'index.php?xophz_nook_phone_designer=1', 'top' );
 		}
+
+		add_rewrite_rule( '^sw\.js$', 'index.php?xophz_nook_phone_sw=1', 'top' );
+		add_rewrite_rule( '^(workbox-.*\.js)$', 'index.php?xophz_nook_phone_workbox=$matches[1]', 'top' );
 	}
 
 	public function register_query_vars( $vars ) {
 		$vars[] = 'xophz_nook_phone';
 		$vars[] = 'xophz_nook_phone_designer';
+		$vars[] = 'xophz_nook_phone_sw';
+		$vars[] = 'xophz_nook_phone_workbox';
 		return $vars;
 	}
 
 	public function template_redirect() {
 		global $wp_query;
+
+		if ( get_query_var( 'xophz_nook_phone_sw' ) ) {
+			$file = XOPHZ_NOOK_PHONE_PATH . 'public/dist/sw.js';
+			if ( file_exists( $file ) ) {
+				header( 'Content-Type: application/javascript' );
+				header( 'Service-Worker-Allowed: /' );
+				echo file_get_contents( $file );
+				exit;
+			}
+		}
+
+		$workbox_file = get_query_var( 'xophz_nook_phone_workbox' );
+		if ( ! empty( $workbox_file ) ) {
+			$workbox_file = preg_replace( '/[^a-zA-Z0-9_-]/', '', str_replace( '.js', '', $workbox_file ) ) . '.js';
+			$file = XOPHZ_NOOK_PHONE_PATH . 'public/dist/' . $workbox_file;
+			if ( file_exists( $file ) ) {
+				header( 'Content-Type: application/javascript' );
+				echo file_get_contents( $file );
+				exit;
+			}
+		}
 		
 		$isRouteMatch = isset( $wp_query->query_vars['xophz_nook_phone'] );
 		$isDesignerRouteMatch = isset( $wp_query->query_vars['xophz_nook_phone_designer'] );
@@ -135,6 +161,11 @@ class Xophz_Nook_Phone_Public {
 			$html = file_get_contents( $index_file );
 			$dist_url = XOPHZ_NOOK_PHONE_URL . 'public/dist/';
 			
+			// Replace hardcoded domain with actual dynamic URL for social/SEO tags
+			// DO THIS FIRST so we don't accidentally replace the domain inside $dist_url
+			$current_url = home_url( $_SERVER['REQUEST_URI'] );
+			$html = str_replace( 'https://nookphone.app/', esc_url( $current_url ), $html );
+
 			// Replace standard dist paths
 			$html = str_replace( '"/assets/', '"' . $dist_url . 'assets/', $html );
 			$html = str_replace( "'/assets/", "'" . $dist_url . "assets/", $html );
@@ -142,10 +173,6 @@ class Xophz_Nook_Phone_Public {
 			$html = str_replace( "'/_app/", "'" . $dist_url . "_app/", $html );
 			$html = str_replace( '"/favicon', '"' . $dist_url . 'favicon', $html );
 			$html = str_replace( '"/manifest.webmanifest"', '"' . $dist_url . 'manifest.webmanifest"', $html );
-			
-			// Replace hardcoded domain with actual dynamic URL for social/SEO tags
-			$current_url = home_url( $_SERVER['REQUEST_URI'] );
-			$html = str_replace( 'https://nookphone.app/', esc_url( $current_url ), $html );
 
 			
 			// Dynamically update router base if needed (e.g. for SvelteKit base)
