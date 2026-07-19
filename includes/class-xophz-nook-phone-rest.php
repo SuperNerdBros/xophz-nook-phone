@@ -142,7 +142,7 @@ class Xophz_Nook_Phone_REST {
 	}
 
 	public function get_patreon_auth_url( WP_REST_Request $request ) {
-		$client_id = getenv('PATREON_CLIENT_ID');
+		$client_id = get_option('xophz_nook_phone_patreon_client_id');
 		if ( ! $client_id ) {
 			return new WP_Error( 'missing_client_id', 'Patreon client ID is not configured', array( 'status' => 500 ) );
 		}

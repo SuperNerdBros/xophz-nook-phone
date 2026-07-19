@@ -52,6 +52,18 @@ class Xophz_Nook_Phone_Admin {
 			'sanitize_callback' => 'sanitize_title'
 		] );
 
+		register_setting( 'xophz_nook_phone_settings', 'xophz_nook_phone_patreon_client_id', [
+			'type' => 'string',
+			'default' => '',
+			'sanitize_callback' => 'sanitize_text_field'
+		] );
+
+		register_setting( 'xophz_nook_phone_settings', 'xophz_nook_phone_patreon_client_secret', [
+			'type' => 'string',
+			'default' => '',
+			'sanitize_callback' => 'sanitize_text_field'
+		] );
+
 		add_settings_section(
 			'xophz_nook_phone_main_section',
 			'App Routing Configuration',
@@ -81,6 +93,29 @@ class Xophz_Nook_Phone_Admin {
 			array( $this, 'render_designer_slug_field' ),
 			'xophz-nook-phone-settings',
 			'xophz_nook_phone_main_section'
+		);
+
+		add_settings_section(
+			'xophz_nook_phone_patreon_section',
+			'Patreon Integration',
+			array( $this, 'render_patreon_section_description' ),
+			'xophz-nook-phone-settings'
+		);
+
+		add_settings_field(
+			'xophz_nook_phone_patreon_client_id',
+			'Patreon Client ID',
+			array( $this, 'render_patreon_client_id_field' ),
+			'xophz-nook-phone-settings',
+			'xophz_nook_phone_patreon_section'
+		);
+
+		add_settings_field(
+			'xophz_nook_phone_patreon_client_secret',
+			'Patreon Client Secret',
+			array( $this, 'render_patreon_client_secret_field' ),
+			'xophz-nook-phone-settings',
+			'xophz_nook_phone_patreon_section'
 		);
 	}
 
@@ -138,24 +173,18 @@ class Xophz_Nook_Phone_Admin {
 		<p class="description">Only used when "Specific Page" is selected above.</p>
 		<script>
 		(function() {
-			const radios = document.querySelectorAll('input[name="<?php echo self::OPTION_LOAD_MODE; ?>"]');
-			const pageRow = document.getElementById('<?php echo self::OPTION_LOAD_PAGE; ?>').closest('tr');
-			const slugInput = document.getElementById('xophz_nook_phone_custom_slug_input');
+			const modeRadios = document.querySelectorAll('input[name="<?php echo self::OPTION_LOAD_MODE; ?>"]');
+			const pageDropdown = document.querySelector('select[name="<?php echo self::OPTION_LOAD_PAGE; ?>"]');
+			const customSlugInput = document.getElementById('xophz_nook_phone_custom_slug_input');
 
-			function toggleDropdowns() {
-				const selected = document.querySelector('input[name="<?php echo self::OPTION_LOAD_MODE; ?>"]:checked');
-				const isSpecificPage = selected && selected.value === 'specific_page';
-				const isCustomSlug = selected && selected.value === 'custom_slug';
-				
-				if (pageRow) pageRow.style.display = isSpecificPage ? '' : 'none';
-				if (slugInput) {
-					slugInput.disabled = !isCustomSlug;
-					if (isCustomSlug) slugInput.focus();
-				}
+			function updateVisibility() {
+				const selectedMode = document.querySelector('input[name="<?php echo self::OPTION_LOAD_MODE; ?>"]:checked').value;
+				pageDropdown.disabled = (selectedMode !== 'specific_page');
+				customSlugInput.disabled = (selectedMode !== 'custom_slug');
 			}
 
-			radios.forEach(function(radio) { radio.addEventListener('change', toggleDropdowns); });
-			toggleDropdowns();
+			modeRadios.forEach(radio => radio.addEventListener('change', updateVisibility));
+			updateVisibility();
 		})();
 		</script>
 		<?php
@@ -164,8 +193,26 @@ class Xophz_Nook_Phone_Admin {
 	public function render_designer_slug_field() {
 		$designerSlug = get_option( self::OPTION_DESIGNER_SLUG, 'island-designer' );
 		?>
-		<code>/</code> <input type="text" name="<?php echo self::OPTION_DESIGNER_SLUG; ?>" value="<?php echo esc_attr( $designerSlug ); ?>" class="regular-text" placeholder="e.g. island-designer" style="width: 150px;" /> <code>/</code>
-		<p class="description">Configure the slug where the Island Designer app is served.</p>
+		<code>/</code> <input type="text" name="<?php echo self::OPTION_DESIGNER_SLUG; ?>" value="<?php echo esc_attr( $designerSlug ); ?>" class="regular-text" placeholder="e.g. island-designer" style="width: 250px;" /> <code>/</code>
+		<p class="description">The URL slug to use for the separate Island Designer application.</p>
+		<?php
+	}
+
+	public function render_patreon_section_description() {
+		echo '<p>Configure your Patreon API credentials to enable the Patreon connection for users.</p>';
+	}
+
+	public function render_patreon_client_id_field() {
+		$clientId = get_option( 'xophz_nook_phone_patreon_client_id', '' );
+		?>
+		<input type="text" name="xophz_nook_phone_patreon_client_id" value="<?php echo esc_attr( $clientId ); ?>" class="regular-text" style="width: 400px;" />
+		<?php
+	}
+
+	public function render_patreon_client_secret_field() {
+		$clientSecret = get_option( 'xophz_nook_phone_patreon_client_secret', '' );
+		?>
+		<input type="password" name="xophz_nook_phone_patreon_client_secret" value="<?php echo esc_attr( $clientSecret ); ?>" class="regular-text" style="width: 400px;" />
 		<?php
 	}
 
