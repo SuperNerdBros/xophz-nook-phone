@@ -181,8 +181,8 @@ class Xophz_Nook_Phone_REST {
 			exit;
 		}
 
-		$client_id = getenv('PATREON_CLIENT_ID');
-		$client_secret = getenv('PATREON_CLIENT_SECRET');
+		$client_id = get_option('xophz_nook_phone_patreon_client_id');
+		$client_secret = get_option('xophz_nook_phone_patreon_client_secret');
 		$redirect_uri = site_url( '/wp-json/xophz/v1/auth/patreon/nook-phone/callback' );
 
 		// Exchange code for token
