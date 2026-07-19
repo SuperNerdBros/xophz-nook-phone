@@ -40,6 +40,12 @@ function run_xophz_nook_phone() {
 
     $rest = new Xophz_Nook_Phone_REST();
     add_action( 'rest_api_init', array( $rest, 'register_routes' ) );
+
+    // Register nightly background sync for the Nookipedia catalog
+    add_action( 'xophz_nook_sync_catalog_cron', array( $rest, 'sync_nookipedia_catalog' ) );
+    if ( ! wp_next_scheduled( 'xophz_nook_sync_catalog_cron' ) ) {
+        wp_schedule_event( time(), 'daily', 'xophz_nook_sync_catalog_cron' );
+    }
 }
 
 add_action( 'plugins_loaded', 'run_xophz_nook_phone' );

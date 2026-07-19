@@ -55,6 +55,18 @@ class Xophz_Nook_Phone_REST {
 		) );
 
 		// DMs
+		register_rest_route( $namespace, '/nook-phone/dms/all', array(
+			'methods'             => WP_REST_Server::READABLE,
+			'callback'            => array( $this, 'get_all_dms' ),
+			'permission_callback' => function () { return is_user_logged_in(); },
+		) );
+
+		register_rest_route( $namespace, '/nook-phone/dms/delete', array(
+			'methods'             => WP_REST_Server::CREATABLE,
+			'callback'            => array( $this, 'delete_dms' ),
+			'permission_callback' => function () { return is_user_logged_in(); },
+		) );
+
 		register_rest_route( $namespace, '/nook-phone/dms/conversations', array(
 			'methods'             => WP_REST_Server::READABLE,
 			'callback'            => array( $this, 'get_dm_conversations' ),
@@ -115,6 +127,172 @@ class Xophz_Nook_Phone_REST {
 			'callback'            => array( $this, 'get_nookipedia_villagers' ),
 			'permission_callback' => '__return_true',
 		) );
+
+		register_rest_route( $namespace, '/auth/patreon/url', array(
+			'methods'             => WP_REST_Server::READABLE,
+			'callback'            => array( $this, 'get_patreon_auth_url' ),
+			'permission_callback' => '__return_true',
+		) );
+
+		register_rest_route( $namespace, '/auth/patreon/callback', array(
+			'methods'             => WP_REST_Server::READABLE,
+			'callback'            => array( $this, 'handle_patreon_callback' ),
+			'permission_callback' => '__return_true',
+		) );
+	}
+
+	public function get_patreon_auth_url( WP_REST_Request $request ) {
+		$client_id = getenv('PATREON_CLIENT_ID');
+		if ( ! $client_id ) {
+			return new WP_Error( 'missing_client_id', 'Patreon client ID is not configured', array( 'status' => 500 ) );
+		}
+		
+		$return_url = $request->get_param( 'return_url' );
+		if ( empty( $return_url ) ) {
+			// default to nookphone if none provided
+			$return_url = home_url( '/' . get_option( 'xophz_nook_phone_custom_slug', 'nookphone' ) );
+		}
+		
+		$redirect_uri = site_url( '/wp-json/xophz/v1/auth/patreon/callback' );
+		$url = 'https://www.patreon.com/oauth2/authorize?response_type=code&client_id=' . urlencode($client_id) . '&redirect_uri=' . urlencode($redirect_uri) . '&scope=' . rawurlencode('identity identity[email]') . '&state=' . urlencode(base64_encode($return_url));
+		
+		return rest_ensure_response( array(
+			'success' => true,
+			'url'     => $url
+		) );
+	}
+
+	public function handle_patreon_callback( WP_REST_Request $request ) {
+		$code = $request->get_param( 'code' );
+		$state = $request->get_param( 'state' );
+		
+		if ( ! $code ) {
+			return new WP_Error( 'missing_code', 'Authorization code missing', array( 'status' => 400 ) );
+		}
+
+		$client_id = getenv('PATREON_CLIENT_ID');
+		$client_secret = getenv('PATREON_CLIENT_SECRET');
+		$redirect_uri = site_url( '/wp-json/xophz/v1/auth/patreon/callback' );
+
+		// Exchange code for token
+		$token_url = 'https://www.patreon.com/api/oauth2/token';
+		$body = array(
+			'code'          => $code,
+			'grant_type'    => 'authorization_code',
+			'client_id'     => $client_id,
+			'client_secret' => $client_secret,
+			'redirect_uri'  => $redirect_uri,
+		);
+
+		$response = wp_remote_post( $token_url, array(
+			'body' => $body
+		) );
+
+		if ( is_wp_error( $response ) ) {
+			return new WP_Error( 'token_error', 'Failed to retrieve access token', array( 'status' => 500 ) );
+		}
+
+		$body = wp_remote_retrieve_body( $response );
+		$data = json_decode( $body, true );
+
+		if ( empty( $data['access_token'] ) ) {
+			return new WP_Error( 'token_error', 'Invalid token response', array( 'status' => 500 ) );
+		}
+
+		$access_token = $data['access_token'];
+		
+		// Fetch user identity with memberships
+		$identity_url = 'https://www.patreon.com/api/oauth2/v2/identity?include=memberships.currently_entitled_tiers&fields[user]=email,full_name&fields[tier]=amount_cents,title';
+		$identity_response = wp_remote_get( $identity_url, array(
+			'headers' => array(
+				'Authorization' => 'Bearer ' . $access_token
+			)
+		) );
+
+		if ( is_wp_error( $identity_response ) ) {
+			return new WP_Error( 'identity_error', 'Failed to retrieve user identity', array( 'status' => 500 ) );
+		}
+
+		$identity_body = wp_remote_retrieve_body( $identity_response );
+		$identity_data = json_decode( $identity_body, true );
+
+		$email = isset( $identity_data['data']['attributes']['email'] ) ? $identity_data['data']['attributes']['email'] : '';
+		$patreon_id = isset( $identity_data['data']['id'] ) ? $identity_data['data']['id'] : '';
+
+		if ( empty( $email ) ) {
+			return new WP_Error( 'identity_error', 'Failed to retrieve email from Patreon', array( 'status' => 500 ) );
+		}
+		
+		// Parse max tier amount
+		$max_tier_cents = 0;
+		if ( isset( $identity_data['included'] ) && is_array( $identity_data['included'] ) ) {
+			foreach ( $identity_data['included'] as $included_item ) {
+				if ( $included_item['type'] === 'tier' && isset( $included_item['attributes']['amount_cents'] ) ) {
+					$amount = (int) $included_item['attributes']['amount_cents'];
+					if ( $amount > $max_tier_cents ) {
+						$max_tier_cents = $amount;
+					}
+				}
+			}
+		}
+
+		// Find user by email or meta
+		$user = get_user_by( 'email', $email );
+		if ( ! $user ) {
+			$users = get_users( array(
+				'meta_key'   => '_patreon_id',
+				'meta_value' => $patreon_id,
+				'number'     => 1,
+				'fields'     => 'all'
+			) );
+			if ( ! empty( $users ) ) {
+				$user = $users[0];
+			}
+		}
+
+		if ( ! $user ) {
+			// Create user
+			$password = wp_generate_password( 12, false );
+			$username = sanitize_user( current( explode( '@', $email ) ), true );
+			if ( username_exists( $username ) ) {
+				$username .= '_' . wp_rand( 1000, 9999 );
+			}
+			$user_id = wp_create_user( $username, $password, $email );
+			
+			if ( is_wp_error( $user_id ) ) {
+				return new WP_Error( 'user_creation_error', 'Failed to create user account', array( 'status' => 500 ) );
+			}
+			$user = get_user_by( 'id', $user_id );
+		}
+
+		// Save Patreon ID
+		update_user_meta( $user->ID, '_patreon_id', $patreon_id );
+		update_user_meta( $user->ID, '_patreon_access_token', $access_token );
+		update_user_meta( $user->ID, '_patreon_tier_cents', $max_tier_cents );
+		if ( isset( $data['refresh_token'] ) ) {
+			update_user_meta( $user->ID, '_patreon_refresh_token', $data['refresh_token'] );
+		}
+
+		// Log the user in
+		wp_set_current_user( $user->ID );
+		wp_set_auth_cookie( $user->ID );
+
+		// Redirect back
+		$redirect_url = '';
+		if ( ! empty( $state ) ) {
+			$decoded_state = base64_decode( $state );
+			if ( $decoded_state && filter_var( $decoded_state, FILTER_VALIDATE_URL ) ) {
+				$redirect_url = $decoded_state;
+			}
+		}
+
+		if ( empty( $redirect_url ) ) {
+			$custom_slug = get_option( 'xophz_nook_phone_custom_slug', 'nookphone' );
+			$redirect_url = home_url( '/' . $custom_slug );
+		}
+
+		wp_redirect( $redirect_url );
+		exit;
 	}
 
 	private function get_or_create_app( $app_slug ) {
@@ -433,6 +611,138 @@ class Xophz_Nook_Phone_REST {
 		) );
 	}
 
+	public function get_all_dms( WP_REST_Request $request ) {
+		$user_id = get_current_user_id();
+
+		$args = array(
+			'post_type'      => 'nook_dm',
+			'posts_per_page' => -1,
+			'post_status'    => 'publish',
+			'meta_query'     => array(
+				'relation' => 'OR',
+				array(
+					'key'     => '_nook_dm_recipient',
+					'value'   => $user_id,
+					'compare' => '='
+				),
+				array(
+					'key'     => '_nook_dm_recipient',
+					'value'   => -1,
+					'compare' => '='
+				)
+			)
+		);
+
+		$sent_args = array(
+			'post_type'      => 'nook_dm',
+			'posts_per_page' => -1,
+			'post_status'    => 'publish',
+			'author'         => $user_id
+		);
+
+		$received = get_posts( $args );
+		$sent = get_posts( $sent_args );
+
+		$all_dms = array_merge( $received, $sent );
+		
+		// Remove duplicates
+		$seen_ids = array();
+		$unique_dms = array();
+		foreach ( $all_dms as $dm ) {
+			if ( ! in_array( $dm->ID, $seen_ids ) ) {
+				$seen_ids[] = $dm->ID;
+				$unique_dms[] = $dm;
+			}
+		}
+		$all_dms = $unique_dms;
+		
+		$deleted_dms = get_user_meta( $user_id, '_nook_deleted_dms', true );
+		if ( ! is_array( $deleted_dms ) ) {
+			$deleted_dms = array();
+		}
+		
+		// Ensure welcome message exists
+		$welcome_query = new WP_Query( array(
+			'post_type'      => 'nook_dm',
+			'posts_per_page' => 1,
+			'post_status'    => 'publish',
+			'meta_query'     => array(
+				array(
+					'key'     => '_nook_dm_recipient',
+					'value'   => -1,
+					'compare' => '='
+				)
+			)
+		) );
+
+		if ( ! $welcome_query->have_posts() ) {
+			$admin_user = get_user_by( 'id', 1 );
+			$admin_id = $admin_user ? $admin_user->ID : 1;
+			$post_id = wp_insert_post( array(
+				'post_title'   => 'Welcome to COMPASS & NookPhone!',
+				'post_content' => "Welcome to COMPASS!\n\nThis Messages app keeps you connected with other residents and island villagers.\n\nHere is how to get started:\n1. Choose category tabs to filter messages.\n2. Tap '+' in the top-right to start a new chat.\n3. Swipe or tap into letters to read them.\n4. Clean up old messages by tapping the trash icon.\n\nEnjoy! - Tom Nook",
+				'post_status'  => 'publish',
+				'post_type'    => 'nook_dm',
+				'post_author'  => $admin_id,
+				'comment_status' => 'open',
+			) );
+
+			if ( ! is_wp_error( $post_id ) ) {
+				update_post_meta( $post_id, '_nook_dm_recipient', -1 );
+				update_post_meta( $post_id, '_nook_dm_read', false );
+				// Refresh posts list to include this new DM
+				$new_dm = get_post( $post_id );
+				if ( $new_dm ) {
+					$all_dms[] = $new_dm;
+				}
+			}
+		}
+
+		$letters = array();
+		foreach ( $all_dms as $dm ) {
+			if ( in_array( $dm->ID, $deleted_dms ) ) {
+				continue;
+			}
+
+			$sender_id = (int) $dm->post_author;
+			$recipient_id = (int) get_post_meta( $dm->ID, '_nook_dm_recipient', true );
+			
+			// Define read flag
+			if ( $recipient_id === -1 ) {
+				$read_dms = get_user_meta( $user_id, '_nook_read_global_dms', true );
+				$is_read = is_array( $read_dms ) && in_array( $dm->ID, $read_dms );
+			} else {
+				$is_read = (bool) get_post_meta( $dm->ID, '_nook_dm_read', true );
+			}
+
+			$sender = get_user_by('id', $sender_id);
+			$recipient = get_user_by('id', $recipient_id);
+
+			$partner_id = ($sender_id === $user_id) ? $recipient_id : $sender_id;
+			if ( $partner_id === -1 ) {
+				$partner_id = $sender_id;
+			}
+
+			$letters[] = array(
+				'id' => $dm->ID,
+				'author' => $sender_id,
+				'author_name' => $sender ? $sender->display_name : 'Unknown',
+				'recipient_id' => $recipient_id,
+				'recipient_name' => $recipient ? $recipient->display_name : ($recipient_id === -1 ? 'All Residents' : 'Unknown'),
+				'title' => array('rendered' => $dm->post_title),
+				'content' => array('rendered' => $dm->post_content),
+				'date' => $dm->post_date,
+				'unread_count' => ($recipient_id === $user_id && !$is_read) ? 1 : (($recipient_id === -1 && !$is_read) ? 1 : 0)
+			);
+		}
+
+		usort($letters, function($a, $b) {
+			return strtotime($b['date']) - strtotime($a['date']);
+		});
+
+		return rest_ensure_response( $letters );
+	}
+
 	public function get_dm_conversations( WP_REST_Request $request ) {
 		$user_id = get_current_user_id();
 		
@@ -536,20 +846,66 @@ class Xophz_Nook_Phone_REST {
 		$sent = get_posts( $args1 );
 		$received = get_posts( $args2 );
 
+		// If viewing thread with admin/ID 1, also pull welcome message (recipient -1)
+		if ( $partner_id === 1 ) {
+			$args3 = array(
+				'post_type'      => 'nook_dm',
+				'posts_per_page' => -1,
+				'post_status'    => 'publish',
+				'author'         => 1,
+				'meta_key'       => '_nook_dm_recipient',
+				'meta_value'     => -1
+			);
+			$global_received = get_posts( $args3 );
+			$received = array_merge( $received, $global_received );
+		}
+
 		$all_dms = array_merge( $sent, $received );
+		
+		// Remove duplicates
+		$seen_ids = array();
+		$unique_dms = array();
+		foreach ( $all_dms as $dm ) {
+			if ( ! in_array( $dm->ID, $seen_ids ) ) {
+				$seen_ids[] = $dm->ID;
+				$unique_dms[] = $dm;
+			}
+		}
+		$all_dms = $unique_dms;
 		usort( $all_dms, function($a, $b) {
 			return strtotime( $a->post_date ) - strtotime( $b->post_date );
 		});
 
+		$deleted_dms = get_user_meta( $user_id, '_nook_deleted_dms', true );
+		if ( ! is_array( $deleted_dms ) ) {
+			$deleted_dms = array();
+		}
+
 		$messages = array();
 		foreach ( $all_dms as $dm ) {
-			$is_read = get_post_meta( $dm->ID, '_nook_dm_read', true );
-			
-			// Mark as read if we are the recipient
+			if ( in_array( $dm->ID, $deleted_dms ) ) {
+				continue;
+			}
+
+			// Define read flag
 			$recipient_id = (int) get_post_meta( $dm->ID, '_nook_dm_recipient', true );
-			if ( $recipient_id === $user_id && ! $is_read ) {
-				update_post_meta( $dm->ID, '_nook_dm_read', true );
+			if ( $recipient_id === -1 ) {
+				$read_dms = get_user_meta( $user_id, '_nook_read_global_dms', true );
+				if ( ! is_array( $read_dms ) ) {
+					$read_dms = array();
+				}
+				if ( ! in_array( $dm->ID, $read_dms ) ) {
+					$read_dms[] = $dm->ID;
+					update_user_meta( $user_id, '_nook_read_global_dms', $read_dms );
+				}
 				$is_read = true;
+			} else {
+				$is_read = get_post_meta( $dm->ID, '_nook_dm_read', true );
+				// Mark as read if we are the recipient
+				if ( $recipient_id === $user_id && ! $is_read ) {
+					update_post_meta( $dm->ID, '_nook_dm_read', true );
+					$is_read = true;
+				}
 			}
 
 			$messages[] = array(
@@ -562,6 +918,68 @@ class Xophz_Nook_Phone_REST {
 		}
 
 		return rest_ensure_response( $messages );
+	}
+
+	public function delete_dms( WP_REST_Request $request ) {
+		$user_id = get_current_user_id();
+		$dm_id = (int) $request->get_param( 'dm_id' );
+		$partner_id = (int) $request->get_param( 'partner_id' );
+
+		$deleted_dms = get_user_meta( $user_id, '_nook_deleted_dms', true );
+		if ( ! is_array( $deleted_dms ) ) {
+			$deleted_dms = array();
+		}
+
+		if ( $dm_id ) {
+			if ( ! in_array( $dm_id, $deleted_dms ) ) {
+				$deleted_dms[] = $dm_id;
+			}
+		} elseif ( $partner_id ) {
+			// Fetch all DMs between user and partner
+			$args1 = array(
+				'post_type'      => 'nook_dm',
+				'posts_per_page' => -1,
+				'post_status'    => 'publish',
+				'author'         => $user_id,
+				'meta_key'       => '_nook_dm_recipient',
+				'meta_value'     => $partner_id
+			);
+			$args2 = array(
+				'post_type'      => 'nook_dm',
+				'posts_per_page' => -1,
+				'post_status'    => 'publish',
+				'author'         => $partner_id,
+				'meta_key'       => '_nook_dm_recipient',
+				'meta_value'     => $user_id
+			);
+			$sent = get_posts( $args1 );
+			$received = get_posts( $args2 );
+			$all_dms = array_merge( $sent, $received );
+			
+			// Also include global BCC messages if partner_id is 1 (Admin)
+			if ( $partner_id === 1 ) {
+				$args3 = array(
+					'post_type'      => 'nook_dm',
+					'posts_per_page' => -1,
+					'post_status'    => 'publish',
+					'author'         => 1,
+					'meta_key'       => '_nook_dm_recipient',
+					'meta_value'     => -1
+				);
+				$global_dms = get_posts( $args3 );
+				$all_dms = array_merge( $all_dms, $global_dms );
+			}
+
+			foreach ( $all_dms as $dm ) {
+				if ( ! in_array( $dm->ID, $deleted_dms ) ) {
+					$deleted_dms[] = $dm->ID;
+				}
+			}
+		}
+
+		update_user_meta( $user_id, '_nook_deleted_dms', $deleted_dms );
+
+		return rest_ensure_response( array( 'success' => true ) );
 	}
 
 	public function send_dm( WP_REST_Request $request ) {
@@ -588,6 +1006,7 @@ class Xophz_Nook_Phone_REST {
 			'post_status'  => 'publish',
 			'post_type'    => 'nook_dm',
 			'post_author'  => $user_id,
+			'comment_status' => 'open',
 		) );
 
 		if ( is_wp_error( $post_id ) ) {
@@ -629,6 +1048,13 @@ class Xophz_Nook_Phone_REST {
 				$state_data['is_pro'] = Xophz_Compass_Xp_Players::is_pro_user( $user_id );
 			} else {
 				$state_data['is_pro'] = false;
+			}
+			
+			$patreon_tier = get_user_meta( $user_id, '_patreon_tier_cents', true );
+			if ( $patreon_tier ) {
+				$state_data['patreonTierCents'] = (int) $patreon_tier;
+			} else {
+				$state_data['patreonTierCents'] = 0;
 			}
 		}
 		
@@ -885,121 +1311,114 @@ class Xophz_Nook_Phone_REST {
 		);
 	}
 
+	public function sync_nookipedia_catalog() {
+		$cache_key = 'xophz_nook_shopping_items_cache_v9';
+		$cached_items = array();
+		$tables_to_query = array(
+			array( 'name' => 'nh_furniture', 'fields' => 'en_name=name,buy1_price,sell,category,image_url' ),
+			array( 'name' => 'nh_interior', 'fields' => 'en_name=name,buy1_price,sell,category,image_url' ),
+			array( 'name' => 'nh_clothing', 'fields' => 'en_name=name,buy1_price,sell,category,image_url' ),
+			array( 'name' => 'nh_photo', 'fields' => 'en_name=name,buy1_price,sell,category,image_url' ),
+			array( 'name' => 'nh_item', 'fields' => 'en_name=name,buy1_price,sell,material_type,image_url' ),
+		);
+		$mw_api_url = 'https://nookipedia.com/w/api.php';
+
+		foreach ( $tables_to_query as $t ) {
+			$offset = 0;
+			$limit = 500;
+			$has_more = true;
+			
+			while ( $has_more ) {
+				$params = array(
+					'action' => 'cargoquery',
+					'format' => 'json',
+					'tables' => $t['name'],
+					'fields' => $t['fields'],
+					'limit'  => $limit,
+					'offset' => $offset,
+				);
+				$url = add_query_arg( $params, $mw_api_url );
+				$response = wp_remote_get( $url, array( 'timeout' => 8 ) );
+
+				if ( is_wp_error( $response ) || wp_remote_retrieve_response_code( $response ) !== 200 ) {
+					break;
+				}
+
+				$body = wp_remote_retrieve_body( $response );
+				$data = json_decode( $body, true );
+
+				if ( isset( $data['error'] ) ) {
+					break;
+				}
+
+				if ( empty( $data['cargoquery'] ) ) {
+					$has_more = false;
+				} else {
+					foreach ( $data['cargoquery'] as $row ) {
+						if ( ! empty( $row['title']['name'] ) ) {
+							$cached_items[] = $this->normalize_nookipedia_row( $row['title'], $t['name'] );
+						}
+					}
+					if ( count( $data['cargoquery'] ) < $limit ) {
+						$has_more = false;
+					} else {
+						$offset += $limit;
+					}
+				}
+			}
+		}
+
+		if ( ! empty( $cached_items ) ) {
+			set_transient( $cache_key, $cached_items, WEEK_IN_SECONDS );
+		}
+		return $cached_items;
+	}
+
 	public function get_nookipedia_items( WP_REST_Request $request ) {
 		$search = $request->get_param( 'search' );
 		$requested_cat = $request->get_param( 'category' );
 
-		// Serving from transient cache if no search is performed
-		if ( empty( $search ) ) {
-			$cache_key = 'xophz_nook_shopping_items_cache_v8';
-			$cached_items = get_transient( $cache_key );
+		$cache_key = 'xophz_nook_shopping_items_cache_v9';
+		$cached_items = get_transient( $cache_key );
 
-			if ( $cached_items === false ) {
-				// Compile main catalog pool from all tables
-				$cached_items = array();
-				$tables_to_query = array(
-					array( 'name' => 'nh_furniture', 'fields' => 'en_name=name,buy1_price,sell,category,image_url', 'where' => '', 'limit' => 150 ),
-					array( 'name' => 'nh_interior', 'fields' => 'en_name=name,buy1_price,sell,category,image_url', 'where' => '', 'limit' => 100 ),
-					array( 'name' => 'nh_clothing', 'fields' => 'en_name=name,buy1_price,sell,category,image_url', 'where' => '', 'limit' => 150 ),
-					array( 'name' => 'nh_photo', 'fields' => 'en_name=name,buy1_price,sell,category,image_url', 'where' => '', 'limit' => 50 ),
-					array( 'name' => 'nh_item', 'fields' => 'en_name=name,buy1_price,sell,material_type,image_url', 'where' => '', 'limit' => 100 ),
-				);
-
-				foreach ( $tables_to_query as $t ) {
-					$res = $this->query_nookipedia_table( $t['name'], $t['fields'], $t['where'], $t['limit'] );
-					if ( ! empty( $res['cargoquery'] ) ) {
-						foreach ( $res['cargoquery'] as $row ) {
-							if ( ! empty( $row['title']['name'] ) ) {
-								$cached_items[] = $this->normalize_nookipedia_row( $row['title'], $t['name'] );
-							}
-						}
-					}
-				}
-
-				if ( ! empty( $cached_items ) ) {
-					set_transient( $cache_key, $cached_items, WEEK_IN_SECONDS );
-				}
-			}
-
-			if ( ! empty( $requested_cat ) && strtolower( $requested_cat ) !== 'all' ) {
-				$cat_lower = strtolower( $requested_cat );
-				$filtered = array();
-				foreach ( $cached_items as $item ) {
-					$item_cat = isset( $item['category'] ) ? strtolower( $item['category'] ) : '';
-					if ( $cat_lower === 'wall-mounted' && ( $item_cat === 'wall-mounted' || $item_cat === 'ceiling decor' ) ) {
-						$filtered[] = $item;
-					} elseif ( $item_cat === $cat_lower ) {
-						$filtered[] = $item;
-					}
-				}
-				return rest_ensure_response( $filtered );
-			}
-
-			return rest_ensure_response( $cached_items );
+		if ( $cached_items === false ) {
+			$cached_items = $this->sync_nookipedia_catalog();
 		}
 
-		// Search mode - dynamic query
-		$all_items = array();
-		$search_safe = addslashes( $search );
-		$where_clause = empty( $search ) ? "" : "en_name LIKE '%" . $search_safe . "%'";
+		$filtered = $cached_items ? $cached_items : array();
 
-		// Determine which tables to query based on requested category to avoid overloading API
-		$tables_to_query = array();
-
+		// Filter by category
 		if ( ! empty( $requested_cat ) && strtolower( $requested_cat ) !== 'all' ) {
 			$cat_lower = strtolower( $requested_cat );
-			$w_prefix = empty( $where_clause ) ? "" : $where_clause . " AND ";
-
-			if ( $cat_lower === 'housewares' ) {
-				$tables_to_query[] = array( 'name' => 'nh_furniture', 'fields' => 'en_name=name,buy1_price,sell,category,image_url', 'where' => $w_prefix . "category = 'Housewares'" );
-			} elseif ( $cat_lower === 'miscellaneous' ) {
-				$tables_to_query[] = array( 'name' => 'nh_furniture', 'fields' => 'en_name=name,buy1_price,sell,category,image_url', 'where' => $w_prefix . "category = 'Miscellaneous'" );
-			} elseif ( $cat_lower === 'wall-mounted' ) {
-				$tables_to_query[] = array( 'name' => 'nh_furniture', 'fields' => 'en_name=name,buy1_price,sell,category,image_url', 'where' => $w_prefix . "(category = 'Wall-mounted' OR category = 'Ceiling decor')" );
-			} elseif ( $cat_lower === 'wallpaper' ) {
-				$tables_to_query[] = array( 'name' => 'nh_interior', 'fields' => 'en_name=name,buy1_price,sell,category,image_url', 'where' => $w_prefix . "category = 'Wallpaper'" );
-			} elseif ( $cat_lower === 'flooring' ) {
-				$tables_to_query[] = array( 'name' => 'nh_interior', 'fields' => 'en_name=name,buy1_price,sell,category,image_url', 'where' => $w_prefix . "category = 'Flooring'" );
-			} elseif ( $cat_lower === 'rugs' ) {
-				$tables_to_query[] = array( 'name' => 'nh_interior', 'fields' => 'en_name=name,buy1_price,sell,category,image_url', 'where' => $w_prefix . "category = 'Rugs'" );
-			} elseif ( $cat_lower === 'fashion' ) {
-				$tables_to_query[] = array( 'name' => 'nh_clothing', 'fields' => 'en_name=name,buy1_price,sell,category,image_url', 'where' => $where_clause );
-			} elseif ( $cat_lower === 'photos' ) {
-				$tables_to_query[] = array( 'name' => 'nh_photo', 'fields' => 'en_name=name,buy1_price,sell,category,image_url', 'where' => $where_clause );
-			} elseif ( $cat_lower === 'music' ) {
-				$tables_to_query[] = array( 'name' => 'nh_item', 'fields' => 'en_name=name,buy1_price,sell,material_type,image_url', 'where' => $w_prefix . "(material_type = 'Music' OR en_name LIKE 'K.K. %')" );
-			} elseif ( $cat_lower === 'tools' ) {
-				$tables_to_query[] = array( 'name' => 'nh_item', 'fields' => 'en_name=name,buy1_price,sell,material_type,image_url', 'where' => $w_prefix . "(material_type = 'Tool' OR en_name LIKE '%axe%' OR en_name LIKE '%shovel%' OR en_name LIKE '%net%' OR en_name LIKE '%rod%')" );
-			} elseif ( $cat_lower === 'other' ) {
-				$tables_to_query[] = array( 'name' => 'nh_item', 'fields' => 'en_name=name,buy1_price,sell,material_type,image_url', 'where' => $w_prefix . "(material_type != 'Music' AND material_type != 'Tool')" );
-			}
-		} else {
-			// Query all tables if no category is specified (All / Tom Nook Search)
-			$tables_to_query = array(
-				array( 'name' => 'nh_furniture', 'fields' => 'en_name=name,buy1_price,sell,category,image_url', 'where' => $where_clause ),
-				array( 'name' => 'nh_interior', 'fields' => 'en_name=name,buy1_price,sell,category,image_url', 'where' => $where_clause ),
-				array( 'name' => 'nh_clothing', 'fields' => 'en_name=name,buy1_price,sell,category,image_url', 'where' => $where_clause ),
-				array( 'name' => 'nh_photo', 'fields' => 'en_name=name,buy1_price,sell,category,image_url', 'where' => $where_clause ),
-				array( 'name' => 'nh_item', 'fields' => 'en_name=name,buy1_price,sell,material_type,image_url', 'where' => $where_clause ),
-			);
-		}
-
-		foreach ( $tables_to_query as $t ) {
-			$res = $this->query_nookipedia_table( $t['name'], $t['fields'], $t['where'], 100 );
-			if ( ! empty( $res['cargoquery'] ) ) {
-				foreach ( $res['cargoquery'] as $row ) {
-					if ( ! empty( $row['title']['name'] ) ) {
-						$all_items[] = $this->normalize_nookipedia_row( $row['title'], $t['name'] );
-					}
+			$temp = array();
+			foreach ( $filtered as $item ) {
+				$item_cat = isset( $item['category'] ) ? strtolower( $item['category'] ) : '';
+				if ( $cat_lower === 'wall-mounted' && ( $item_cat === 'wall-mounted' || $item_cat === 'ceiling decor' ) ) {
+					$temp[] = $item;
+				} elseif ( $item_cat === $cat_lower ) {
+					$temp[] = $item;
 				}
 			}
+			$filtered = $temp;
 		}
 
-		return rest_ensure_response( $all_items );
+		// Filter by search
+		if ( ! empty( $search ) ) {
+			$search_lower = strtolower( $search );
+			$temp = array();
+			foreach ( $filtered as $item ) {
+				if ( strpos( strtolower( $item['name'] ), $search_lower ) !== false ) {
+					$temp[] = $item;
+				}
+			}
+			$filtered = $temp;
+		}
+
+		return rest_ensure_response( $filtered );
 	}
 
 	public function get_nookipedia_villagers( WP_REST_Request $request ) {
-		$cache_key = 'xophz_nook_villagers_cache_v2';
+		$cache_key = 'xophz_nook_villagers_cache_v3';
 		$cached_villagers = get_transient( $cache_key );
 
 		if ( $cached_villagers !== false ) {
@@ -1017,7 +1436,7 @@ class Xophz_Nook_Phone_REST {
 				'action' => 'cargoquery',
 				'format' => 'json',
 				'tables' => 'villager',
-				'fields' => 'name,image_url,species,personality,birthday,sign',
+				'fields' => 'name,image_url,species,personality,birthday,sign,quote,phrase,gender,clothing,url',
 				'limit'  => $limit,
 				'offset' => $offset,
 			);
@@ -1044,6 +1463,11 @@ class Xophz_Nook_Phone_REST {
 						'personality' => $row['title']['personality'],
 						'birthday'    => $row['title']['birthday'],
 						'sign'        => $row['title']['sign'],
+						'quote'       => $row['title']['quote'],
+						'phrase'      => $row['title']['phrase'],
+						'gender'      => $row['title']['gender'],
+						'clothing'    => $row['title']['clothing'],
+						'url'         => $row['title']['url'],
 					);
 				}
 				$offset += $limit;

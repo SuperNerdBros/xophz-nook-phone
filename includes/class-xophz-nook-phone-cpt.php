@@ -138,11 +138,20 @@ class Xophz_Nook_Phone_CPT {
 			'has_archive'        => false,
 			'hierarchical'       => false,
 			'menu_position'      => null,
-			'show_in_rest'       => false, // We use custom endpoints
-			'supports'           => array( 'title', 'editor', 'author', 'custom-fields' ),
+			'show_in_rest'       => true, // Required to allow WP REST comments to be posted
+			'supports'           => array( 'title', 'editor', 'author', 'custom-fields', 'comments' ),
 		);
 
 		register_post_type( 'nook_dm', $args );
+
+		// Ensure comments are always open for nook_dm CPT so REST comments post succeeds
+		add_filter( 'comments_open', function( $open, $post_id ) {
+			$post = get_post( $post_id );
+			if ( $post && $post->post_type === 'nook_dm' ) {
+				return true;
+			}
+			return $open;
+		}, 10, 2 );
 	}
 
 	public function populate_default_apps() {
