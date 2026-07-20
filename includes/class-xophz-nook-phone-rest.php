@@ -1286,10 +1286,10 @@ class Xophz_Nook_Phone_REST {
 			if ( json_last_error() !== JSON_ERROR_NONE ) {
 				return new WP_Error( 'invalid_json', 'Invalid JSON payload.', array( 'status' => 400 ) );
 			}
-			update_user_meta( $user_id, '_nook_os_state', wp_json_encode( $state_data ) );
+			update_user_meta( $user_id, '_nook_os_state', wp_slash( wp_json_encode( $state_data ) ) );
 		} else if ( is_array( $state_json ) ) {
 			$state_data = $state_json;
-			update_user_meta( $user_id, '_nook_os_state', wp_json_encode( $state_json ) );
+			update_user_meta( $user_id, '_nook_os_state', wp_slash( wp_json_encode( $state_json ) ) );
 		}
 		
 		// Do not blindly sync bells from local state to GP!
@@ -1675,6 +1675,7 @@ class Xophz_Nook_Phone_REST {
 			if ( $sheet === 'wallpaper' ) return 'Wallpaper';
 			if ( $sheet === 'floors' ) return 'Flooring';
 			if ( $sheet === 'rugs' ) return 'Rugs';
+			if ( $sheet === 'message cards' ) return 'Message Cards';
 			return 'Other';
 		};
 
@@ -1700,7 +1701,7 @@ class Xophz_Nook_Phone_REST {
 			$buy = isset( $item['buy'] ) ? intval( $item['buy'] ) : 0;
 			$sell = isset( $item['sell'] ) ? intval( $item['sell'] ) : 0;
 			
-			$compact[] = array(
+			$entry = array(
 				'id'           => sanitize_title( $name ),
 				'name'         => $name,
 				'imageUrl'     => $image,
@@ -1710,6 +1711,16 @@ class Xophz_Nook_Phone_REST {
 				'is_orderable' => $buy > 0,
 				'category'     => $map_category( $item['sourceSheet'] )
 			);
+
+			if ( $item['sourceSheet'] === 'Message Cards' ) {
+				$entry['bodyColor'] = isset($item['bodyColor']) ? $item['bodyColor'] : '';
+				$entry['penColor1'] = isset($item['penColor1']) ? $item['penColor1'] : '';
+				$entry['penColor2'] = isset($item['penColor2']) ? $item['penColor2'] : '';
+				$entry['penColor3'] = isset($item['penColor3']) ? $item['penColor3'] : '';
+				$entry['penColor4'] = isset($item['penColor4']) ? $item['penColor4'] : '';
+			}
+
+			$compact[] = $entry;
 		}
 
 		foreach ( $creatures as $c ) {
