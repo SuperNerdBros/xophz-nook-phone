@@ -149,9 +149,6 @@ class Xophz_Nook_Phone_Public {
 				
 				echo $dev_html;
 				exit;
-			} else {
-				echo '<p>Nook OS Dev server is not running on port ' . $vite_port . '.</p>';
-				exit;
 			}
 		}
 

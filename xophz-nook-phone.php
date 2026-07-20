@@ -4,6 +4,8 @@
  * Description:       Standalone WordPress backend and router for the Nook OS (NookPhone) web app.
  * Version:           26.7.20.310
  * Author:            Hall of the Gods, Inc.
+ * Category:          Command Deck
+ * Group:             Ecosystem
  * Text Domain:       xophz-nook-phone
  */
 
