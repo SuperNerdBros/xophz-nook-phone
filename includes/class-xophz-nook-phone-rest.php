@@ -54,6 +54,26 @@ class Xophz_Nook_Phone_REST {
 			'permission_callback' => function () { return is_user_logged_in(); },
 		) );
 
+		// Tip resident chat thread
+		register_rest_route( $namespace, '/nook-phone/threads/tip', array(
+			'methods'             => WP_REST_Server::CREATABLE,
+			'callback'            => array( $this, 'tip_thread' ),
+			'permission_callback' => function () { return is_user_logged_in(); },
+		) );
+
+		// Board Status and Donations
+		register_rest_route( $namespace, '/nook-phone/boards/status', array(
+			'methods'             => WP_REST_Server::READABLE,
+			'callback'            => array( $this, 'get_board_status' ),
+			'permission_callback' => '__return_true',
+		) );
+
+		register_rest_route( $namespace, '/nook-phone/boards/donate', array(
+			'methods'             => WP_REST_Server::CREATABLE,
+			'callback'            => array( $this, 'donate_to_board' ),
+			'permission_callback' => function () { return is_user_logged_in(); },
+		) );
+
 		// DMs
 		register_rest_route( $namespace, '/nook-phone/dms/all', array(
 			'methods'             => WP_REST_Server::READABLE,
@@ -334,11 +354,27 @@ class Xophz_Nook_Phone_REST {
 
 	public function record_install( WP_REST_Request $request ) {
 		$app_slug = $request->get_param( 'app_slug' );
+		$uuid = $request->get_param( 'uuid' );
 		if ( empty( $app_slug ) ) {
 			return new WP_Error( 'missing_app_slug', 'App slug is required', array( 'status' => 400 ) );
 		}
 
 		$app_id = $this->get_or_create_app( $app_slug );
+
+		if ( ! empty( $uuid ) ) {
+			$uuid = sanitize_text_field( $uuid );
+			$meta_key = '_nook_installed_by_' . $uuid;
+			$already_installed = get_post_meta( $app_id, $meta_key, true );
+			if ( $already_installed ) {
+				return rest_ensure_response( array(
+					'success'  => true,
+					'app_slug' => $app_slug,
+					'installs' => (int) get_post_meta( $app_id, '_nook_app_installs', true ),
+					'skipped'  => true
+				) );
+			}
+			update_post_meta( $app_id, $meta_key, '1' );
+		}
 
 		$current_installs = (int) get_post_meta( $app_id, '_nook_app_installs', true );
 		$current_installs++;
@@ -511,12 +547,21 @@ class Xophz_Nook_Phone_REST {
 					);
 				}
 
+				$slug = $query->post->post_name;
+				$installs = (int) get_post_meta( $id, '_nook_app_installs', true );
+				$core_slugs = array( 'miles', 'happy-island-designer', 'pattern-tool', 'critterpedia', 'dodo-air' );
+				
+				if ( in_array( $slug, $core_slugs ) ) {
+					$user_count = count_users();
+					$installs = max( $installs, $user_count['total_users'] );
+				}
+
 				$apps[] = array(
 					'id'             => $id,
-					'slug'           => $query->post->post_name,
+					'slug'           => $slug,
 					'title'          => get_the_title(),
 					'description'    => get_the_content(),
-					'installs'       => (int) get_post_meta( $id, '_nook_app_installs', true ),
+					'installs'       => $installs,
 					'average_rating' => (float) get_post_meta( $id, '_nook_app_average_rating', true ),
 					'rating_count'   => (int) get_post_meta( $id, '_nook_app_rating_count', true ),
 					'thumbnail'      => get_the_post_thumbnail_url( $id, 'full' ),
@@ -583,10 +628,14 @@ class Xophz_Nook_Phone_REST {
 			while ( $query->have_posts() ) {
 				$query->the_post();
 				$id = get_the_ID();
+				$subnook = get_post_meta($id, '_subnook', true);
+				$tips = (int) get_post_meta($id, '_tips', true);
 				$threads[] = array(
 					'id'            => $id,
 					'title'         => get_the_title(),
 					'content'       => get_the_content(),
+					'subnook'       => $subnook,
+					'tips'          => $tips,
 					'author_id'     => get_the_author_meta('ID'),
 					'author_name'   => get_the_author_meta('display_name'),
 					'date'          => get_the_date('c'),
@@ -602,6 +651,7 @@ class Xophz_Nook_Phone_REST {
 	public function create_thread( WP_REST_Request $request ) {
 		$title = sanitize_text_field( $request->get_param( 'title' ) );
 		$content = wp_kses_post( $request->get_param( 'content' ) );
+		$subnook = sanitize_text_field( $request->get_param( 'subnook' ) );
 
 		if ( empty( $title ) || empty( $content ) ) {
 			return new WP_Error( 'missing_fields', 'Title and content are required', array( 'status' => 400 ) );
@@ -621,9 +671,74 @@ class Xophz_Nook_Phone_REST {
 			return $post_id;
 		}
 
+		if ( ! empty( $subnook ) ) {
+			update_post_meta( $post_id, '_subnook', $subnook );
+		}
+
 		return rest_ensure_response( array(
 			'success'   => true,
 			'thread_id' => $post_id
+		) );
+	}
+
+	public function tip_thread( WP_REST_Request $request ) {
+		$thread_id = (int) $request->get_param( 'thread_id' );
+		$amount = (int) $request->get_param( 'amount' );
+		if ( $amount <= 0 ) $amount = 25;
+
+		if ( ! get_post( $thread_id ) ) {
+			return new WP_Error( 'not_found', 'Thread not found', array( 'status' => 404 ) );
+		}
+
+		$current_tips = (int) get_post_meta( $thread_id, '_tips', true );
+		update_post_meta( $thread_id, '_tips', $current_tips + $amount );
+
+		$global_pool = (int) get_option( 'nook_global_raffle_pool', 0 );
+		update_option( 'nook_global_raffle_pool', $global_pool + $amount );
+
+		return rest_ensure_response( array(
+			'success'      => true,
+			'new_tips'     => $current_tips + $amount,
+			'global_pool'  => $global_pool + $amount
+		) );
+	}
+
+	public function get_board_status( WP_REST_Request $request ) {
+		$board = sanitize_text_field( $request->get_param( 'board' ) );
+		if ( empty( $board ) ) return rest_ensure_response( array() );
+
+		// Core boards are permanently unlocked
+		$core_boards = array('bb/All', 'bb/Isabelle', 'bb/TomNook', 'bb/Lottie', 'bb/KKSlider', 'bb/Blathers');
+		if ( in_array( $board, $core_boards ) ) {
+			return rest_ensure_response( array( 'board' => $board, 'funded' => true, 'raised' => 280000, 'goal' => 280000 ) );
+		}
+
+		$raised = (int) get_option( 'nook_board_funding_' . sanitize_key( $board ), 0 );
+		return rest_ensure_response( array(
+			'board'  => $board,
+			'funded' => $raised >= 280000,
+			'raised' => $raised,
+			'goal'   => 280000
+		) );
+	}
+
+	public function donate_to_board( WP_REST_Request $request ) {
+		$board = sanitize_text_field( $request->get_param( 'board' ) );
+		$amount = (int) $request->get_param( 'amount' );
+
+		if ( empty( $board ) || $amount <= 0 ) {
+			return new WP_Error( 'invalid_data', 'Board and amount are required', array( 'status' => 400 ) );
+		}
+
+		$raised = (int) get_option( 'nook_board_funding_' . sanitize_key( $board ), 0 );
+		$new_total = $raised + $amount;
+		update_option( 'nook_board_funding_' . sanitize_key( $board ), $new_total );
+
+		return rest_ensure_response( array(
+			'success' => true,
+			'board'   => $board,
+			'funded'  => $new_total >= 280000,
+			'raised'  => $new_total
 		) );
 	}
 
@@ -748,7 +863,8 @@ class Xophz_Nook_Phone_REST {
 				'title' => array('rendered' => $dm->post_title),
 				'content' => array('rendered' => $dm->post_content),
 				'date' => $dm->post_date,
-				'unread_count' => ($recipient_id === $user_id && !$is_read) ? 1 : (($recipient_id === -1 && !$is_read) ? 1 : 0)
+				'unread_count' => ($recipient_id === $user_id && !$is_read) ? 1 : (($recipient_id === -1 && !$is_read) ? 1 : 0),
+				'stationery_id' => get_post_meta( $dm->ID, '_nook_dm_stationery', true ) ?: 'airmail'
 			);
 		}
 
@@ -1002,6 +1118,8 @@ class Xophz_Nook_Phone_REST {
 		$user_id = get_current_user_id();
 		$recipient_id = (int) $request->get_param( 'recipient_id' );
 		$content = sanitize_textarea_field( $request->get_param( 'content' ) );
+		$subject = sanitize_text_field( $request->get_param( 'subject' ) );
+		$stationery_id = sanitize_text_field( $request->get_param( 'stationery_id' ) );
 
 		if ( ! $recipient_id || ! $content ) {
 			return new WP_Error( 'missing_fields', 'Recipient and content are required', array( 'status' => 400 ) );
@@ -1017,7 +1135,7 @@ class Xophz_Nook_Phone_REST {
 		}
 
 		$post_id = wp_insert_post( array(
-			'post_title'   => 'DM from ' . $user_id . ' to ' . $recipient_id,
+			'post_title'   => ! empty( $subject ) ? $subject : 'DM from ' . $user_id . ' to ' . $recipient_id,
 			'post_content' => $content,
 			'post_status'  => 'publish',
 			'post_type'    => 'nook_dm',
@@ -1031,6 +1149,10 @@ class Xophz_Nook_Phone_REST {
 
 		update_post_meta( $post_id, '_nook_dm_recipient', $recipient_id );
 		update_post_meta( $post_id, '_nook_dm_read', false );
+
+		if ( ! empty( $stationery_id ) ) {
+			update_post_meta( $post_id, '_nook_dm_stationery', $stationery_id );
+		}
 
 		return rest_ensure_response( array(
 			'success' => true,
@@ -1103,11 +1225,9 @@ class Xophz_Nook_Phone_REST {
 			update_user_meta( $user_id, '_nook_os_state', wp_json_encode( $state_json ) );
 		}
 		
-		// Sync bells from state to user meta / GP (Bells)
-		if ( is_array( $state_data ) && isset( $state_data['bells'] ) ) {
-			$new_bells = (int) $state_data['bells'];
-			update_user_meta( $user_id, '_xp_total_gp', $new_bells );
-		}
+		// Do not blindly sync bells from local state to GP!
+		// The XP system is the single source of truth for Bells/GP.
+		// NookPhone must use the transaction API to spend/earn GP.
 		
 		// Fire action for the XP engine to process collections/activities
 		do_action( 'xophz_nook_phone_state_saved', $user_id, $state_data, $old_state_data );

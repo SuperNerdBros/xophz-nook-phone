@@ -99,6 +99,15 @@ function xophz_nook_phone_handle_force_update() {
     check_admin_referer( 'xophz_nook_phone_force_update' );
     
     $version = XOPHZ_NOOK_PHONE_VERSION;
+    
+    $response = wp_remote_get( 'https://github.com/SuperNerdBros/xophz-nook-phone/tags' );
+    if ( ! is_wp_error( $response ) && wp_remote_retrieve_response_code( $response ) === 200 ) {
+        $body = wp_remote_retrieve_body( $response );
+        if ( preg_match( '/\/SuperNerdBros\/xophz-nook-phone\/releases\/tag\/(v?[0-9\.]+)/i', $body, $matches ) ) {
+            $version = ltrim( $matches[1], 'v' );
+        }
+    }
+    
     $zip_url = "https://github.com/SuperNerdBros/xophz-nook-phone/releases/download/v{$version}/xophz-nook-phone-{$version}.zip";
     
     include_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
