@@ -33,6 +33,13 @@ class Xophz_Nook_Phone_REST {
 			'permission_callback' => function () { return is_user_logged_in(); },
 		) );
 
+        // Delete passport
+        register_rest_route( $namespace, '/nook-phone/passport/delete', array(
+			'methods'             => WP_REST_Server::CREATABLE,
+			'callback'            => array( $this, 'delete_passport' ),
+			'permission_callback' => function () { return is_user_logged_in(); },
+		) );
+
 		// Get user passports
 		register_rest_route( $namespace, '/nook-phone/passports', array(
 			'methods'             => WP_REST_Server::READABLE,
@@ -139,6 +146,22 @@ class Xophz_Nook_Phone_REST {
 		register_rest_route( $namespace, '/nookipedia/items', array(
 			'methods'             => WP_REST_Server::READABLE,
 			'callback'            => array( $this, 'get_nookipedia_items' ),
+			'permission_callback' => '__return_true',
+		) );
+
+		register_rest_route(
+			'xophz/v1',
+			'/acnh/villagers',
+			array(
+				'methods'             => WP_REST_Server::READABLE,
+				'callback'            => array( $this, 'get_acnh_villagers' ),
+				'permission_callback' => '__return_true',
+			)
+		);
+
+		register_rest_route( $namespace, '/acnh/items', array(
+			'methods'             => WP_REST_Server::READABLE,
+			'callback'            => array( $this, 'get_acnh_items' ),
 			'permission_callback' => '__return_true',
 		) );
 
@@ -480,12 +503,18 @@ class Xophz_Nook_Phone_REST {
         $user_id = get_current_user_id();
         
         // Create or update a nook_passport CPT
-        $passport_id = wp_insert_post( array(
+        $post_data = array(
             'post_title'  => sanitize_text_field( $passport_data['name'] ) . "'s Passport",
             'post_type'   => 'nook_passport',
             'post_status' => 'publish',
             'post_author' => $user_id
-        ) );
+        );
+
+        if ( ! empty( $passport_data['id'] ) ) {
+            $post_data['ID'] = intval( $passport_data['id'] );
+        }
+
+        $passport_id = wp_insert_post( $post_data );
 
         if ( is_wp_error( $passport_id ) ) {
             return $passport_id;
@@ -499,6 +528,44 @@ class Xophz_Nook_Phone_REST {
         return rest_ensure_response( array(
             'success'     => true,
             'passport_id' => $passport_id
+        ) );
+    }
+
+    public function delete_passport( WP_REST_Request $request ) {
+        $passport_id = intval( $request->get_param( 'id' ) );
+        if ( empty( $passport_id ) ) {
+            return new WP_Error( 'missing_id', 'Passport ID is required', array( 'status' => 400 ) );
+        }
+
+        $user_id = get_current_user_id();
+        $post = get_post( $passport_id );
+
+        if ( ! $post || $post->post_type !== 'nook_passport' || intval( $post->post_author ) !== $user_id ) {
+            return new WP_Error( 'forbidden', 'You do not have permission to delete this passport', array( 'status' => 403 ) );
+        }
+
+        // Count remaining passports to ensure at least 1 remains
+        $remaining = get_posts( array(
+            'post_type'   => 'nook_passport',
+            'author'      => $user_id,
+            'post_status' => 'publish',
+            'fields'      => 'ids',
+            'posts_per_page' => -1
+        ) );
+
+        if ( count( $remaining ) <= 1 ) {
+            return new WP_Error( 'minimum_reached', 'You must have at least one passport', array( 'status' => 400 ) );
+        }
+
+        // Force delete
+        $deleted = wp_delete_post( $passport_id, true );
+
+        if ( ! $deleted ) {
+            return new WP_Error( 'delete_failed', 'Could not delete the passport', array( 'status' => 500 ) );
+        }
+
+        return rest_ensure_response( array(
+            'success' => true
         ) );
     }
 
@@ -1419,10 +1486,22 @@ class Xophz_Nook_Phone_REST {
 			} elseif ( $raw_cat === 'rugs' ) {
 				$category = 'Rugs';
 			}
-		} elseif ( $source_table === 'nh_clothing' ) {
+		} elseif ( $source_table === 'nh_clothing' || $source_table === 'nh_clothing_variation' ) {
 			$category = 'Fashion';
 		} elseif ( $source_table === 'nh_photo' ) {
 			$category = 'Photos';
+		} elseif ( $source_table === 'nh_bug' ) {
+			$category = 'Bugs';
+		} elseif ( $source_table === 'nh_fish' ) {
+			$category = 'Fish';
+		} elseif ( $source_table === 'nh_sea_creature' ) {
+			$category = 'Sea Creatures';
+		} elseif ( $source_table === 'nh_fossil' ) {
+			$category = 'Fossils';
+		} elseif ( $source_table === 'nh_art' ) {
+			$category = 'Art';
+		} elseif ( $source_table === 'nh_tool' ) {
+			$category = 'Tools';
 		} elseif ( $source_table === 'nh_item' ) {
 			$mat_type = isset( $row['material_type'] ) ? strtolower( $row['material_type'] ) : '';
 			if ( $mat_type === 'music' || strpos( strtolower( $name ), 'k.k.' ) !== false || strpos( strtolower( $name ), 'aircheck' ) !== false ) {
@@ -1448,13 +1527,19 @@ class Xophz_Nook_Phone_REST {
 	}
 
 	public function sync_nookipedia_catalog() {
-		$cache_key = 'xophz_nook_shopping_items_cache_v9';
+		$cache_key = 'xophz_nook_shopping_items_cache_v10';
 		$cached_items = array();
 		$tables_to_query = array(
 			array( 'name' => 'nh_furniture', 'fields' => 'en_name=name,buy1_price,sell,category,image_url' ),
 			array( 'name' => 'nh_interior', 'fields' => 'en_name=name,buy1_price,sell,category,image_url' ),
-			array( 'name' => 'nh_clothing', 'fields' => 'en_name=name,buy1_price,sell,category,image_url' ),
+			array( 'name' => 'nh_clothing_variation', 'fields' => 'en_name=name,image_url' ),
 			array( 'name' => 'nh_photo', 'fields' => 'en_name=name,buy1_price,sell,category,image_url' ),
+			array( 'name' => 'nh_bug', 'fields' => 'name,sell_nook=sell,image_url' ),
+			array( 'name' => 'nh_fish', 'fields' => 'name,sell_nook=sell,image_url' ),
+			array( 'name' => 'nh_sea_creature', 'fields' => 'name,sell_nook=sell,image_url' ),
+			array( 'name' => 'nh_fossil', 'fields' => 'name,sell,image_url' ),
+			array( 'name' => 'nh_art', 'fields' => 'name,buy,sell,image_url' ),
+			array( 'name' => 'nh_tool', 'fields' => 'en_name=name,buy1_price,sell,image_url' ),
 			array( 'name' => 'nh_item', 'fields' => 'en_name=name,buy1_price,sell,material_type,image_url' ),
 		);
 		$mw_api_url = 'https://nookipedia.com/w/api.php';
@@ -1510,11 +1595,154 @@ class Xophz_Nook_Phone_REST {
 		return $cached_items;
 	}
 
+	public function get_acnh_items( WP_REST_Request $request ) {
+		$search = $request->get_param( 'search' );
+		$requested_cat = $request->get_param( 'category' );
+		
+		$compact = $this->get_unified_acnh_data();
+		
+		// If JSON processing fails, fallback to Nookipedia API
+		if ( empty( $compact ) ) {
+			return $this->get_nookipedia_items( $request );
+		}
+
+		$filtered = $compact;
+
+		// Filter by category
+		if ( ! empty( $requested_cat ) && strtolower( $requested_cat ) !== 'all' ) {
+			$cat_lower = strtolower( $requested_cat );
+			$temp = array();
+			foreach ( $filtered as $item ) {
+				$item_cat = isset( $item['category'] ) ? strtolower( $item['category'] ) : '';
+				if ( $item_cat === $cat_lower ) {
+					$temp[] = $item;
+				}
+			}
+			$filtered = $temp;
+		}
+
+		// Filter by search
+		if ( ! empty( $search ) ) {
+			$search_lower = strtolower( $search );
+			$temp = array();
+			foreach ( $filtered as $item ) {
+				if ( strpos( strtolower( $item['name'] ), $search_lower ) !== false ) {
+					$temp[] = $item;
+				}
+			}
+			$filtered = $temp;
+		}
+
+		return rest_ensure_response( array_values( $filtered ) );
+	}
+
+	private function get_unified_acnh_data() {
+		$data_dir = plugin_dir_path( dirname( __FILE__ ) ) . 'data/';
+		$compact_file = $data_dir . 'compact_items.json';
+
+		// Return cached compact file if exists
+		if ( file_exists( $compact_file ) ) {
+			return json_decode( file_get_contents( $compact_file ), true );
+		}
+
+		$items_file = $data_dir . 'Items.json';
+		$creatures_file = $data_dir . 'Creatures.json';
+
+		if ( ! file_exists( $items_file ) || ! file_exists( $creatures_file ) ) {
+			return false;
+		}
+
+		$items = json_decode( file_get_contents( $items_file ), true );
+		$creatures = json_decode( file_get_contents( $creatures_file ), true );
+		$compact = array();
+		$seen = array();
+
+		$map_category = function( $sheet ) {
+			$sheet = strtolower( $sheet );
+			$fashion = array('tops', 'bottoms', 'dresses', 'headwear', 'accessories', 'socks', 'shoes', 'bags', 'umbrellas', 'clothing other');
+			if ( in_array( $sheet, $fashion ) ) return 'Fashion';
+			if ( $sheet === 'insects' ) return 'Bugs';
+			if ( $sheet === 'fish' ) return 'Fish';
+			if ( $sheet === 'sea creatures' ) return 'Sea Creatures';
+			if ( $sheet === 'fossils' ) return 'Fossils';
+			if ( $sheet === 'art' ) return 'Art';
+			if ( $sheet === 'music' ) return 'Music';
+			if ( $sheet === 'tools' ) return 'Tools';
+			if ( $sheet === 'photos' || $sheet === 'posters' ) return 'Photos';
+			if ( $sheet === 'housewares' ) return 'Housewares';
+			if ( $sheet === 'miscellaneous' ) return 'Miscellaneous';
+			if ( $sheet === 'wall-mounted' ) return 'Wall-mounted';
+			if ( $sheet === 'wallpaper' ) return 'Wallpaper';
+			if ( $sheet === 'floors' ) return 'Flooring';
+			if ( $sheet === 'rugs' ) return 'Rugs';
+			return 'Other';
+		};
+
+		foreach ( $items as $item ) {
+			if ( empty( $item['name'] ) ) continue;
+			$name = $item['name'];
+			if ( isset( $seen[ $name ] ) ) continue;
+			$seen[ $name ] = true;
+
+			$image = '';
+			if ( ! empty( $item['image'] ) ) {
+				$image = $item['image'];
+			} elseif ( ! empty( $item['variations'] ) && is_array( $item['variations'] ) && ! empty( $item['variations'][0]['image'] ) ) {
+				$image = $item['variations'][0]['image'];
+			} elseif ( ! empty( $item['albumImage'] ) ) {
+				$image = $item['albumImage'];
+			} elseif ( ! empty( $item['storageImage'] ) ) {
+				$image = $item['storageImage'];
+			} elseif ( ! empty( $item['inventoryImage'] ) ) {
+				$image = $item['inventoryImage'];
+			}
+			
+			$buy = isset( $item['buy'] ) ? intval( $item['buy'] ) : 0;
+			$sell = isset( $item['sell'] ) ? intval( $item['sell'] ) : 0;
+			
+			$compact[] = array(
+				'id'           => sanitize_title( $name ),
+				'name'         => $name,
+				'imageUrl'     => $image,
+				'image_url'    => $image,
+				'buy_price'    => $buy,
+				'sell_price'   => $sell,
+				'is_orderable' => $buy > 0,
+				'category'     => $map_category( $item['sourceSheet'] )
+			);
+		}
+
+		foreach ( $creatures as $c ) {
+			if ( empty( $c['name'] ) ) continue;
+			$name = $c['name'];
+			if ( isset( $seen[ $name ] ) ) continue;
+			$seen[ $name ] = true;
+
+			$image = isset( $c['iconImage'] ) ? $c['iconImage'] : '';
+			$sell = isset( $c['sell'] ) ? intval( $c['sell'] ) : 0;
+			
+			$compact[] = array(
+				'id' => sanitize_title( $name ),
+				'name' => $name,
+				'image' => $image,
+				'imageUrl' => $image,
+				'image_url' => $image,
+				'buy_price' => 0,
+				'sell_price' => $sell,
+				'is_orderable' => false,
+				'category' => $map_category( $c['sourceSheet'] )
+			);
+		}
+
+		file_put_contents( $compact_file, json_encode( $compact ) );
+		return $compact;
+	}
+
 	public function get_nookipedia_items( WP_REST_Request $request ) {
 		$search = $request->get_param( 'search' );
 		$requested_cat = $request->get_param( 'category' );
 
-		$cache_key = 'xophz_nook_shopping_items_cache_v9';
+		$cache_key = 'xophz_nook_shopping_items_cache_v10';
 		$cached_items = get_transient( $cache_key );
 
 		if ( $cached_items === false ) {
@@ -1551,6 +1779,86 @@ class Xophz_Nook_Phone_REST {
 		}
 
 		return rest_ensure_response( $filtered );
+	}
+
+	public function get_acnh_villagers( WP_REST_Request $request ) {
+		$data_dir = plugin_dir_path( dirname( __FILE__ ) ) . 'data/';
+		$compact_file = $data_dir . 'compact_villagers.json';
+
+		if ( file_exists( $compact_file ) ) {
+			return rest_ensure_response( json_decode( file_get_contents( $compact_file ), true ) );
+		}
+
+		$villagers_file = $data_dir . 'Villagers.json';
+		if ( ! file_exists( $villagers_file ) ) {
+			return $this->get_nookipedia_villagers( $request );
+		}
+
+		$villagers = json_decode( file_get_contents( $villagers_file ), true );
+		$compact = array();
+
+		foreach ( $villagers as $v ) {
+			if ( empty( $v['name'] ) ) continue;
+			
+			$birthday = isset( $v['birthday'] ) ? $v['birthday'] : '';
+			$sign = 'Unknown';
+			if ( ! empty( $birthday ) ) {
+				$parts = explode( '/', $birthday );
+				if ( count( $parts ) === 2 ) {
+					$m = intval( $parts[0] );
+					$d = intval( $parts[1] );
+					if ( ( $m == 3 && $d >= 21 ) || ( $m == 4 && $d <= 19 ) ) $sign = 'Aries';
+					elseif ( ( $m == 4 && $d >= 20 ) || ( $m == 5 && $d <= 20 ) ) $sign = 'Taurus';
+					elseif ( ( $m == 5 && $d >= 21 ) || ( $m == 6 && $d <= 20 ) ) $sign = 'Gemini';
+					elseif ( ( $m == 6 && $d >= 21 ) || ( $m == 7 && $d <= 22 ) ) $sign = 'Cancer';
+					elseif ( ( $m == 7 && $d >= 23 ) || ( $m == 8 && $d <= 22 ) ) $sign = 'Leo';
+					elseif ( ( $m == 8 && $d >= 23 ) || ( $m == 9 && $d <= 22 ) ) $sign = 'Virgo';
+					elseif ( ( $m == 9 && $d >= 23 ) || ( $m == 10 && $d <= 22 ) ) $sign = 'Libra';
+					elseif ( ( $m == 10 && $d >= 23 ) || ( $m == 11 && $d <= 21 ) ) $sign = 'Scorpio';
+					elseif ( ( $m == 11 && $d >= 22 ) || ( $m == 12 && $d <= 21 ) ) $sign = 'Sagittarius';
+					elseif ( ( $m == 12 && $d >= 22 ) || ( $m == 1 && $d <= 19 ) ) $sign = 'Capricorn';
+					elseif ( ( $m == 1 && $d >= 20 ) || ( $m == 2 && $d <= 18 ) ) $sign = 'Aquarius';
+					elseif ( ( $m == 2 && $d >= 19 ) || ( $m == 3 && $d <= 20 ) ) $sign = 'Pisces';
+				}
+			}
+
+			$photoImage = isset( $v['photoImage'] ) ? $v['photoImage'] : '';
+			$poster_url = '';
+			if ( $photoImage ) {
+				$poster_url = str_replace( 'NpcBromide/', 'FtrIcon/Poster', $photoImage );
+			}
+
+			// Generate Nookipedia / Dodo.ac full body render URL
+			$render_filename = str_replace( ' ', '_', $v['name'] ) . '_NH.png';
+			$render_hash = md5( $render_filename );
+			$hash1 = substr( $render_hash, 0, 1 );
+			$hash2 = substr( $render_hash, 0, 2 );
+			$render_url = "https://dodo.ac/np/images/{$hash1}/{$hash2}/{$render_filename}";
+
+			$compact[] = array(
+				'id'          => sanitize_title( $v['name'] ),
+				'name'        => $v['name'],
+				'species'     => isset( $v['species'] ) ? $v['species'] : '',
+				'gender'      => isset( $v['gender'] ) ? $v['gender'] : '',
+				'personality' => isset( $v['personality'] ) ? $v['personality'] : '',
+				'birthday'    => $birthday,
+				'sign'        => $sign,
+				'catchphrase' => isset( $v['catchphrase'] ) ? $v['catchphrase'] : '',
+				'quote'       => isset( $v['favoriteSaying'] ) ? $v['favoriteSaying'] : '',
+				'clothing'    => isset( $v['defaultClothing'] ) ? $v['defaultClothing'] : '',
+				'icon'        => isset( $v['iconImage'] ) ? $v['iconImage'] : '',
+				'icon_url'    => isset( $v['iconImage'] ) ? $v['iconImage'] : '',
+				'image'       => $photoImage ? $photoImage : (isset( $v['iconImage'] ) ? $v['iconImage'] : ''),
+				'image_url'   => isset( $v['iconImage'] ) ? $v['iconImage'] : ($photoImage ? $photoImage : ''),
+				'poster_url'  => $poster_url,
+				'render_url'  => $render_url,
+				'favorite_colors' => isset( $v['colors'] ) ? $v['colors'] : array(),
+				'favorite_styles' => isset( $v['styles'] ) ? $v['styles'] : array()
+			);
+		}
+
+		file_put_contents( $compact_file, json_encode( $compact ) );
+		return rest_ensure_response( $compact );
 	}
 
 	public function get_nookipedia_villagers( WP_REST_Request $request ) {
