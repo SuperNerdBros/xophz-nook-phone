@@ -38,6 +38,12 @@ class Xophz_Nook_Phone_Public {
 	public function template_redirect() {
 		global $wp_query;
 
+		// Do not intercept WordPress admin or login routes.
+		$request_uri = $_SERVER['REQUEST_URI'] ?? '';
+		if ( strpos( $request_uri, '/wp-admin' ) === 0 || strpos( $request_uri, '/wp-login.php' ) === 0 ) {
+			return;
+		}
+
 		if ( get_query_var( 'xophz_nook_phone_sw' ) ) {
 			$file = XOPHZ_NOOK_PHONE_PATH . 'public/dist/sw.js';
 			if ( file_exists( $file ) ) {
