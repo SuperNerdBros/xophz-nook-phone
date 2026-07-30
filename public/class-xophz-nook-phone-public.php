@@ -130,7 +130,7 @@ class Xophz_Nook_Phone_Public {
 		
 		// Setup Vite Dev server URL dynamically based on WP host
 		$wp_host = wp_parse_url( home_url(), PHP_URL_HOST );
-		$vite_port = '5175'; // Using 5175 so it doesn't conflict with dodo-air
+		$vite_port = '8085';
 		$vite_url = "//" . $wp_host . ":" . $vite_port;
 
 		if ( $is_dev ) {
