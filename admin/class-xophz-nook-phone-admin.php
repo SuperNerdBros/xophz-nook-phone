@@ -118,20 +118,20 @@ class Xophz_Nook_Phone_Admin {
 		<fieldset>
 			<label>
 				<input type="radio" name="<?php echo self::OPTION_LOAD_MODE; ?>" value="routes_only" <?php checked( $currentMode, 'routes_only' ); ?>>
-				<strong>Routes Only</strong> — No default slug. Uses core API endpoints.
+				<strong>Routes Only</strong> - No default slug. Uses core API endpoints.
 			</label><br>
 			<label style="display: flex; align-items: center; gap: 8px; margin: 8px 0;">
 				<input type="radio" name="<?php echo self::OPTION_LOAD_MODE; ?>" value="custom_slug" <?php checked( $currentMode, 'custom_slug' ); ?>>
-				<strong>Custom Slug</strong> — 
+				<strong>Custom Slug</strong> - 
 				<code>/</code> <input type="text" id="xophz_nook_phone_custom_slug_input" name="<?php echo self::OPTION_CUSTOM_SLUG; ?>" value="<?php echo esc_attr( $customSlug ); ?>" class="regular-text" placeholder="e.g. nookphone" style="width: 150px;" /> <code>/</code>
 			</label>
 			<label>
 				<input type="radio" name="<?php echo self::OPTION_LOAD_MODE; ?>" value="homepage" <?php checked( $currentMode, 'homepage' ); ?>>
-				<strong>Homepage</strong> — Replace the site's front page with Nook OS.
+				<strong>Homepage</strong> - Replace the site's front page with Nook OS.
 			</label><br>
 			<label>
 				<input type="radio" name="<?php echo self::OPTION_LOAD_MODE; ?>" value="specific_page" <?php checked( $currentMode, 'specific_page' ); ?>>
-				<strong>Specific Page</strong> — Load on a chosen WordPress page.
+				<strong>Specific Page</strong> - Load on a chosen WordPress page.
 			</label>
 		</fieldset>
 		<?php
@@ -143,7 +143,7 @@ class Xophz_Nook_Phone_Admin {
 		wp_dropdown_pages( [
 			'name' => self::OPTION_LOAD_PAGE,
 			'selected' => $selectedPageId,
-			'show_option_none' => '— Select a Page —',
+			'show_option_none' => '- Select a Page -',
 			'option_none_value' => '0',
 		] );
 		?>
