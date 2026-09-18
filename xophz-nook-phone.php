@@ -18,12 +18,27 @@ define( 'XOPHZ_NOOK_PHONE_VERSION', '26.9.11' );
 define( 'XOPHZ_NOOK_PHONE_PATH', plugin_dir_path( __FILE__ ) );
 define( 'XOPHZ_NOOK_PHONE_URL', plugin_dir_url( __FILE__ ) );
 
-require_once XOPHZ_NOOK_PHONE_PATH . 'admin/class-xophz-nook-phone-admin.php';
-require_once XOPHZ_NOOK_PHONE_PATH . 'public/class-xophz-nook-phone-public.php';
-require_once XOPHZ_NOOK_PHONE_PATH . 'includes/class-xophz-nook-phone-rest.php';
-require_once XOPHZ_NOOK_PHONE_PATH . 'includes/class-xophz-nook-phone-cpt.php';
+$required_files = array(
+    'admin/class-xophz-nook-phone-admin.php',
+    'public/class-xophz-nook-phone-public.php',
+    'includes/class-xophz-nook-phone-rest.php',
+    'includes/class-xophz-nook-phone-cpt.php',
+);
+
+foreach ( $required_files as $file ) {
+    $full_path = XOPHZ_NOOK_PHONE_PATH . $file;
+    if ( file_exists( $full_path ) ) {
+        require_once $full_path;
+    } else {
+        error_log( sprintf( '[xophz-nook-phone] Missing required file: %s', $full_path ) );
+    }
+}
 
 function run_xophz_nook_phone() {
+    if ( ! class_exists( 'Xophz_Nook_Phone_CPT' ) || ! class_exists( 'Xophz_Nook_Phone_Admin' ) || ! class_exists( 'Xophz_Nook_Phone_Public' ) || ! class_exists( 'Xophz_Nook_Phone_REST' ) ) {
+        return;
+    }
+
     $cpt = new Xophz_Nook_Phone_CPT();
     add_action( 'init', array( $cpt, 'register_post_types' ) );
     add_action( 'init', array( $cpt, 'populate_default_apps' ), 20 );
