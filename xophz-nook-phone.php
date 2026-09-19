@@ -1,6 +1,7 @@
 <?php
 /**
  * Plugin Name:       Nook OS
+ * Plugin URI:        https://nookphone.app
  * Description:       Standalone WordPress backend and router for the Nook OS (NookPhone) web app.
  * Version:           26.9.18-1191
  * Author:            Hall of the Gods, Inc.
