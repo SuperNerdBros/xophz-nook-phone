@@ -3,7 +3,7 @@
  * Plugin Name:       Nook OS
  * Plugin URI:        https://nookphone.app
  * Description:       Standalone WordPress backend and router for the Nook OS (NookPhone) web app.
- * Version:           26.9.19-277
+ * Version:           26.9.20
  * Author:            Hall of the Gods, Inc.
  * Category:          Command Deck
  * Group:             Ecosystem
@@ -15,7 +15,7 @@ if ( ! defined( 'WPINC' ) ) {
 	die;
 }
 
-define( 'XOPHZ_NOOK_PHONE_VERSION', '26.9.19-277' );
+define( 'XOPHZ_NOOK_PHONE_VERSION', '26.9.20' );
 define( 'XOPHZ_NOOK_PHONE_PATH', plugin_dir_path( __FILE__ ) );
 define( 'XOPHZ_NOOK_PHONE_URL', plugin_dir_url( __FILE__ ) );
 
