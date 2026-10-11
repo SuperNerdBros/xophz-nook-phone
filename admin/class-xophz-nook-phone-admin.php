@@ -52,17 +52,8 @@ class Xophz_Nook_Phone_Admin {
 			'sanitize_callback' => 'sanitize_title'
 		] );
 
-		register_setting( 'xophz_nook_phone_settings', 'xophz_nook_phone_patreon_client_id', [
-			'type' => 'string',
-			'default' => '',
-			'sanitize_callback' => 'sanitize_text_field'
-		] );
-
-		register_setting( 'xophz_nook_phone_settings', 'xophz_nook_phone_patreon_client_secret', [
-			'type' => 'string',
-			'default' => '',
-			'sanitize_callback' => 'sanitize_text_field'
-		] );
+		// The Patreon client ID and secret are the patreon_client_id / patreon_client_secret
+		// connectors (Settings > Connectors). Core registers their settings; none is registered here.
 
 		add_settings_section(
 			'xophz_nook_phone_main_section',
@@ -93,6 +84,21 @@ class Xophz_Nook_Phone_Admin {
 			array( $this, 'render_designer_slug_field' ),
 			'xophz-nook-phone-settings',
 			'xophz_nook_phone_main_section'
+		);
+
+		add_settings_section(
+			'xophz_nook_phone_patreon_section',
+			'Patreon',
+			array( $this, 'render_patreon_section_description' ),
+			'xophz-nook-phone-settings'
+		);
+
+		add_settings_field(
+			'xophz_nook_phone_patreon_credentials_field',
+			'Client Credentials',
+			array( $this, 'render_patreon_credentials_field' ),
+			'xophz-nook-phone-settings',
+			'xophz_nook_phone_patreon_section'
 		);
 	}
 
@@ -176,20 +182,20 @@ class Xophz_Nook_Phone_Admin {
 	}
 
 	public function render_patreon_section_description() {
-		echo '<p>Configure your Patreon API credentials to enable the Patreon connection for users.</p>';
+		echo '<p>Patreon API credentials enable the Patreon connection for users.</p>';
 	}
 
-	public function render_patreon_client_id_field() {
-		$clientId = get_option( 'xophz_nook_phone_patreon_client_id', '' );
+	public function render_patreon_credentials_field() {
+		$hasClientId     = Xophz_Nook_Phone_Connectors::is_configured( Xophz_Nook_Phone_Connectors::PATREON_CLIENT_ID );
+		$hasClientSecret = Xophz_Nook_Phone_Connectors::is_configured( Xophz_Nook_Phone_Connectors::PATREON_CLIENT_SECRET );
 		?>
-		<input type="text" name="xophz_nook_phone_patreon_client_id" value="<?php echo esc_attr( $clientId ); ?>" class="regular-text" style="width: 400px;" />
-		<?php
-	}
-
-	public function render_patreon_client_secret_field() {
-		$clientSecret = get_option( 'xophz_nook_phone_patreon_client_secret', '' );
-		?>
-		<input type="password" name="xophz_nook_phone_patreon_client_secret" value="<?php echo esc_attr( $clientSecret ); ?>" class="regular-text" style="width: 400px;" />
+		<p>Client ID: <strong><?php echo $hasClientId ? 'Configured' : 'Not configured'; ?></strong></p>
+		<p>Client Secret: <strong><?php echo $hasClientSecret ? 'Configured' : 'Not configured'; ?></strong></p>
+		<p class="description">
+			Manage the <strong>Patreon Client ID</strong> and <strong>Patreon Client Secret</strong> connectors in
+			<a href="<?php echo esc_url( Xophz_Nook_Phone_Connectors::connectors_url() ); ?>">Settings &gt; Connectors</a>.
+			The secret is never shown on this page.
+		</p>
 		<?php
 	}
 

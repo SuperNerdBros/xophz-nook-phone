@@ -185,7 +185,7 @@ class Xophz_Nook_Phone_REST {
 	}
 
 	public function get_patreon_auth_url( WP_REST_Request $request ) {
-		$client_id = get_option('xophz_nook_phone_patreon_client_id');
+		$client_id = Xophz_Nook_Phone_Connectors::get_key( Xophz_Nook_Phone_Connectors::PATREON_CLIENT_ID );
 		if ( ! $client_id ) {
 			return new WP_Error( 'missing_client_id', 'Patreon client ID is not configured', array( 'status' => 500 ) );
 		}
@@ -224,8 +224,8 @@ class Xophz_Nook_Phone_REST {
 			exit;
 		}
 
-		$client_id = get_option('xophz_nook_phone_patreon_client_id');
-		$client_secret = get_option('xophz_nook_phone_patreon_client_secret');
+		$client_id = Xophz_Nook_Phone_Connectors::get_key( Xophz_Nook_Phone_Connectors::PATREON_CLIENT_ID );
+		$client_secret = Xophz_Nook_Phone_Connectors::get_key( Xophz_Nook_Phone_Connectors::PATREON_CLIENT_SECRET );
 		$redirect_uri = site_url( '/wp-json/xophz/v1/auth/patreon/nook-phone/callback' );
 
 		// Exchange code for token
