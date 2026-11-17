@@ -4,7 +4,8 @@
  * Plugin URI:        https://nookphone.app
  * Description:       Standalone WordPress backend and router for the Nook OS (NookPhone) web app.
  * Version:           26.10.11
- * Author:            Hall of the Gods, Inc.
+ * Author:            My Compass Consulting
+ * Author URI:        https://mycompassconsulting.com/
  * Category:          Command Deck
  * Group:             Ecosystem
  * Text Domain:       xophz-nook-phone
